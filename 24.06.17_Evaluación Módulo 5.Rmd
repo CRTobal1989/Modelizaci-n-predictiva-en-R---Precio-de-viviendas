@@ -1,0 +1,2462 @@
+---
+title: 24.06.17_Evaluación Módulo 5
+author: "Cristóbal León-Salas"
+date: "2024-06-17"
+output:
+    html_document:
+    theme: yeti
+    highlight: tango
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    code_folding: show 
+    number_sections: true
+    toc: true
+    toc_float:
+    collapsed: false 
+    smooth_scroll: false
+---
+<center>
+
+![](img/Seguro_Terceros.jpg)
+</center>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.align = 'center',
+  fig.width = 12,  # Esto actúa como un valor base
+  fig.height = 5,  # También un valor base
+  out.width = '100%',  # Asegura que el ancho se ajuste
+  out.height = '80%'   # Ajusta el alto al 80%
+)
+```
+
+
+<h1 style="font-size:25px;"><b> 0.0. CARGA DE LIBRERIAS</b></h1>
+
+```{r 0.0. Carga de librerias}
+
+#Se cargan todas las librerias que van a ser usadas durante el ejercicio:
+
+suppressPackageStartupMessages({
+   library(idealista18)
+   library(kableExtra)
+   library(dplyr)
+   library(ggmap)
+   library(ggplot2)
+   library(inspectdf)
+   library(mice)
+   library(data.table)
+   library(corrplot)
+   library(sf)
+   library(h2o)
+   library(tictoc)
+   library(stringr)
+   library(forcats)
+   library(caret)
+   library(FactoMineR)
+   library(factoextra)
+   library(kknn)
+   library(flextable)
+   library(DALEX)
+   library(DALEXtra)
+   library(gridExtra)
+   library(cowplot)
+  library(iBreakDown)
+  
+  
+     })
+
+```
+
+<h1 style="font-size:25px;"><b> 0.0.bis PARÁMETRO ENTRENA </b></h1>
+
+```{r 0.0.bis PARÁMETRO ENTRENA}
+
+entrena <- 0
+
+```
+
+<h1 style="font-size:25px;"><b> 0.1. Función renombrar nombres columnas </b></h1>
+
+```{r 0.1. Función renombrar nombres columnas}
+
+rename_column <- function(df, old_name, new_name) {
+  df <- rename(df, !!new_name := !!old_name)
+  return(df)
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 0.2. Función fusión variables </b></h1>
+
+```{r 0.2. Función fusión variables}
+
+fusionar_variables <- function(df, north_var, south_var, east_var, west_var) {
+  df$Orientation <- apply(df, 1, function(row) {
+    if (row[[north_var]] == 1) {
+      return('NORTH')
+    } else if (row[[south_var]] == 1) {
+      return('SOUTH')
+    } else if (row[[east_var]] == 1) {
+      return('EAST')
+    } else if (row[[west_var]] == 1) {
+      return('WEST')
+    } else {
+      return(NA)  # Por si ninguna de las condiciones se cumple
+    }
+  })
+  
+  # Convertir la nueva variable en factor
+  df$Orientation <- as.factor(df$Orientation)
+  
+  return(df)
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 0.3. Función determinar zona </b></h1>
+
+```{r 0.3. Función determinar zona}
+
+determinar_zona <- function(long, lat) {
+  dec_lat_N = quantile(lat, probs = seq(0.1, 1, 0.1))[7]
+  dec_lat_S = quantile(lat, probs = seq(0.1, 1, 0.1))[3]
+  dec_long_O = quantile(long, probs = seq(0.1, 1, 0.1))[3]
+  dec_long_E = quantile(long, probs = seq(0.1, 1, 0.1))[7]
+
+  zona <- mapply(function(lat, long) {
+    if(lat >= dec_lat_N) {
+      if(long <= dec_long_O) return("NO")
+      else if(long >= dec_long_E) return("NE")
+      else return("N")
+    } else if(lat <= dec_lat_S) {
+      if(long <= dec_long_O) return("SO")
+      else if(long >= dec_long_E) return("SE")
+      else return("S")
+    } else {
+      if(long <= dec_long_O) return("O")
+      else if(long >= dec_long_E) return("E")
+      else return("C")
+    }
+  }, lat, long)
+
+  return(zona)
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 0.4. Funcion observaciones outliers </b></h1>
+
+```{r  0.4. Funcion observaciones outliers}
+
+W_outliers_univariantes <- function(data, var){
+
+var <- as.symbol(var)
+   
+  outliers <- boxplot.stats(data[[var]])$out
+ 
+  return(data %>% filter(!!var %in% outliers))
+}
+
+```
+   
+<h1 style="font-size:25px;"><b> 0.5. Funcion eliminación outliers </b></h1> 
+   
+```{r 0.5. Funcion eliminación outliers}
+
+outliers_univariantes <- function(data, var){
+
+   
+  var <- as.symbol(var)
+   
+  outliers <- boxplot.stats(data[[var]])$out
+ 
+  
+  return(data %>% filter(!(!!var %in% outliers)))
+}
+
+```  
+
+<h1 style="font-size:25px;"><b>  0.6. Función número outliers </b></h1> 
+
+```{r 0.6. Función número outliers}
+
+  outliers <- function(data, var){
+  
+  # Identificar outliers
+   
+  var <- as.symbol(var)
+   
+  num_outliers <- length(boxplot.stats(data[[var]])$out)
+ 
+  return(num_outliers)
+  }
+
+```
+
+<h1 style="font-size:25px;"><b>  0.7. Función Maquetar </b></h1> 
+
+```{r 0.7. Función Maquetar}
+
+maquetar <- function(x){
+  ft <- flextable(data = x) %>%
+            fontsize(size = 10, part = "body") %>% 
+            fontsize(size = 12, part = "header")
+  ft <- color(ft, color = "orange", part = "header")
+  return(autofit(ft))
+}
+
+```
+
+<h1 style="font-size:25px;"><b>  0.8. Función medidas modelos </b></h1> 
+
+```{r 0.8. Función medidas modelos}
+
+Medidas_Modelo_reg <- function(modelo) {
+ 
+  pred.train           <- as.data.frame(predict(modelo, train_reg, type = "raw"))
+  names(pred.train)    <- "Prediccion"
+  pred.train           <- cbind.data.frame(pred.train, Respuesta = train_reg$PRICE)
+  R2.train             <- R2(pred.train$Prediccion, pred.train$Respuesta)
+  RMSE.train           <- RMSE(pred.train$Prediccion, pred.train$Respuesta)
+  MAE.train            <- MAE(pred.train$Prediccion, pred.train$Respuesta)
+
+  pred.test            <- as.data.frame(predict(modelo, test_reg, type = "raw"))
+  names(pred.test)     <- "Prediccion"
+  pred.test            <- cbind.data.frame(pred.test, Respuesta = test_reg$PRICE)
+  R2.test              <- R2(pred.test$Prediccion, pred.test$Respuesta)
+  RMSE.test            <- RMSE(pred.test$Prediccion, pred.test$Respuesta)
+  MAE.test             <- MAE(pred.test$Prediccion, pred.test$Respuesta)
+  
+  Muestra <- c("Entrenamiento", "Test")
+  R2      <- c(R2.train,  R2.test)
+  RMSE    <- c(RMSE.train,  RMSE.test)
+  MAE     <- c(MAE.train,  MAE.test)
+  
+  resul <- data.frame(Muestra, R2, RMSE, MAE)
+  maquetar(resul)
+}
+
+
+```
+
+<h1 style="font-size:25px;"><b>  0.9. Función extrae resultados </b></h1> 
+
+```{r 0.9. Función extrae resultado}
+
+extract_model_results <- function(model, model_name) {
+  results <- model$resample
+  results$Model <- model_name
+  return(results)
+}
+
+```
+
+
+
+
+<h1 style="font-size:25px;"><b> 1.0. PRE-PROCESADO - Carga de datos </b></h1>
+
+```{r 1.0. PRE-PROCESADO - Carga de datos}
+
+data("Barcelona_Sale")
+data("Madrid_Sale")
+data("Valencia_Sale")
+
+df_Barcelona_ori = data.frame(Barcelona_Sale)
+df_Madrid_ori = data.frame(Madrid_Sale)
+df_Valencia_ori = data.frame(Valencia_Sale)
+
+```
+
+<h1 style="font-size:25px;"><b> 1.1. PRE-PROCESADO - Pre-visualización de los datos </b></h1>
+
+```{r 1.1. PRE-PROCESADO - Pre-visualización de los datos}
+
+#Saco las 6 primeras filas de cada dataset:
+
+head(df_Barcelona_ori) %>% kbl(caption = "Datos Viviendas Barcelona") %>% kable_minimal()
+head(df_Madrid_ori) %>% kbl(caption = "Datos Viviendas Madrid") %>% kable_minimal()
+head (df_Valencia_ori) %>% kbl(caption = "Datos Viviendas Valencia") %>% kable_minimal()
+
+#Saco las dimensiones de cada base de datos:
+
+dim_B = dim(df_Barcelona_ori)
+dim_M = dim(df_Madrid_ori)
+dim_V = dim(df_Valencia_ori)
+
+dim_ciudades = cbind(Barcelona = dim_B, Madrid = dim_M, Valencia =dim_V)
+row.names(dim_ciudades) = c("Observaciones","Variables")
+sum_observaciones = sum(dim_ciudades[1,])
+Perc_obs = dim_ciudades[1,]/sum_observaciones*100
+dim_ciudades = rbind(dim_ciudades,Perc_obs=Perc_obs)
+
+print(dim_ciudades)
+
+# Todos los conuntos de datos cuentan con el mismo número de variables
+# En cuanto a observaciones, Madrid, cuenta con casi el 50% de las observaciones totales entre los 3 conjuntos de datos; le sigue Barcelona con 32.3% aproximadamente del total de las observaciones y finalmente Valencia con un 17.7%
+
+# Una vesz, ya sé que tengo el mismo número de variables en todos los datasets, quiero saber si se están refiriendo a lo mismo, de modo que, veo que nombres de variables cambian de un dataset a otro:
+
+nombres_Barcelona <- colnames(df_Barcelona_ori)
+nombres_Madrid <- colnames(df_Madrid_ori)
+nombres_Valencia <- colnames(df_Valencia_ori)
+
+# Analizo las diferencias entre cada dataset y monto una tabla con estas "variables diferentes":
+
+Dif_Barcelona = c("-",setdiff(nombres_Barcelona, nombres_Madrid),setdiff(nombres_Barcelona, nombres_Valencia))
+Dif_Madrid = c(setdiff(nombres_Madrid, nombres_Barcelona),"-",setdiff(nombres_Madrid, nombres_Valencia))
+Dif_Valencia = c(setdiff(nombres_Valencia, nombres_Barcelona),setdiff(nombres_Valencia, nombres_Madrid),"-")
+
+Dif_Barcelona
+Dif_Madrid
+Dif_Valencia
+
+# Se observa que solo hay una diferencia en los nombres. Parece que esta relacionada con la distancia a la calle principal de cada ciudad.
+
+DIF_datasets = cbind(Dif_Barcelona=Dif_Barcelona,Dif_Madrid =Dif_Madrid ,Dif_Valencia =Dif_Valencia )
+row.names(DIF_datasets) = c("Barcelona","Madrid","Valencia")
+
+DIF_datasets %>% kbl(caption = "Comparativa dif variables") %>% kable_minimal()
+
+# Con el objeto de poder comparar todos los dataset, se unican los nombres de estas variables a una común: DISTANCE_TO_MAIN_STREET
+
+df_Barcelona_ori <- rename_column(df_Barcelona_ori, "DISTANCE_TO_DIAGONAL", "DISTANCE_TO_MAIN_STREET")
+df_Madrid_ori <- rename_column(df_Madrid_ori, "DISTANCE_TO_CASTELLANA", "DISTANCE_TO_MAIN_STREET")
+df_Valencia_ori <- rename_column(df_Valencia_ori, "DISTANCE_TO_BLASCO", "DISTANCE_TO_MAIN_STREET")
+
+#Comprobación de que ya no hay ninguna variable nombrada de manera desigual en todos los datasets:
+
+nombres_Barcelona <- colnames(df_Barcelona_ori)
+nombres_Madrid <- colnames(df_Madrid_ori)
+nombres_Valencia <- colnames(df_Valencia_ori)
+
+setdiff(nombres_Barcelona, nombres_Madrid)
+setdiff(nombres_Barcelona, nombres_Valencia)
+setdiff(nombres_Madrid, nombres_Valencia)
+
+# Comprueba si todas las variables de los 3 dataframes tienen la misma clase
+
+same_type_BM <- all(unlist(sapply(df_Barcelona_ori, class)) == unlist(sapply(df_Madrid_ori, class)))
+same_type_BV <- all(unlist(sapply(df_Barcelona_ori, class)) == unlist(sapply(df_Valencia_ori, class)))
+same_type_VM <- all(unlist(sapply(df_Valencia_ori, class)) == unlist(sapply(df_Madrid_ori, class)))
+
+same_type_BM
+same_type_BV
+same_type_VM
+
+# Obsevo que las clases del dataframe de Barcelona son diferentes a las de Madrid y Valencia. Veamos donde se produce esta diferencia:
+
+types_df_Barcelona_ori <- unlist(sapply(df_Barcelona_ori, class))
+types_df_Madrid_ori<- unlist(sapply(df_Madrid_ori, class))
+types_df_Valencia_ori<- unlist(sapply(df_Valencia_ori, class))
+
+type_comparison_BM <- types_df_Barcelona_ori == types_df_Madrid_ori
+type_comparison_BV <- types_df_Barcelona_ori == types_df_Valencia_ori
+
+comparison_summary_BM <- data.frame(Column = names(type_comparison_BM), 
+                                 types_df_Barcelona_ori = types_df_Barcelona_ori, 
+                                 types_df_Madrid_ori = types_df_Madrid_ori, 
+                                 SameType = type_comparison_BM)
+
+comparison_summary_BV <- data.frame(Column = names(type_comparison_BV), 
+                                 types_df_Barcelona_ori = types_df_Barcelona_ori, 
+                                 types_df_Valencia_ori = types_df_Valencia_ori, 
+                                 SameType = type_comparison_BV)
+
+
+mismatched_columns_BM <- comparison_summary_BM %>% filter(SameType == FALSE)
+mismatched_columns_BV <- comparison_summary_BV %>% filter(SameType == FALSE)
+
+print(mismatched_columns_BM)
+print(mismatched_columns_BV)
+
+# Tanto en el df de Valencia como en el de Madrid, la variable PARKINGSPACEPRICE es entera. Sin embargo, en el dataframe de Barcelona, esta es numérica. Dado que esta variable está referida al precio de una plaza de garage, considero que tiene más sentido que sea de tipo numérica, por tanto, se cambioa en los dataframes de Madrid y Valencia del siguiente modo:
+
+df_Madrid_ori$PARKINGSPACEPRICE = as.numeric (df_Madrid_ori$PARKINGSPACEPRICE)
+df_Valencia_ori$PARKINGSPACEPRICE = as.numeric (df_Valencia_ori$PARKINGSPACEPRICE)
+
+```
+
+<h1 style="font-size:25px;"><b> 1.2. PRE-PROCESADO - Análisis variables</b></h1>
+
+```{r 1.2. PRE-PROCESADO - Análisis variables}
+
+# Se muestra una pequeña descripciónd e cada una de las variables, una vez, todas son nombras del mismo modo en todos los datasets:
+
+# ASSETID: Factor. Adimensional. Identificador del activo
+# PERIOD: Numérico discreto. AAAAMM. Indica el trimestre en donde se proporcionan los datos.
+# PRICE: Numérica continua. €. Precio del acitvo
+# UNITPRICE: Numérica continua. €/m2. Precio del activo por m2.
+# CONSTRUCTEDAREA: Numérica discreta. m2. Superficie construida.
+# ROOMNUMBER: Numérica discreta. Número de habitaciones.
+# BATHNUMBER: Numérica discreta. Número de baños.
+# HASTERRACE: Numérica discreta. Variable dummy. 1 hay terraza, 0 no hay.
+# HASLIFT: Numérica discreta. Variable dummy. 1 hay ascensor, 0 no hay.
+# HASAIRCONDITIONING: Numérica discreta. Variable dummy. 1 hay aire acondicionado, 0 no hay.
+# AMENITYID: Numérica discreta. Indica los servicios incluidos (1 - sin muebles, sin servicios de cocina, 2 - servicios de cocina, sin muebles, 3 - servicios de cocina, muebles)
+# HASPARKINGSPACE: Numérica discreta. Variable dummy. 1 hay parking, 0 no hay.
+# ISPARKINGSPACEINCLUDEDINPRICE: Numérica discreta. Variable dummy. Si hay parking, 1 si parking incluida en el precio, 0 sino.
+# PARKINGSPACEPRICE: Numérica continua. €. Precio del parking.
+# HASNORTHORIENTATION: Numérica discreta. Variable dummy. 1 si tiene orientación norte, 0 sino. 
+# HASSOUTHORIENTATION: Numérica discreta. Variable dummy. 1 si tiene orientación sur, 0 sino.
+# HASEASTORIENTATION: Numérica discreta. Variable dummy. 1 si tiene orientación este, 0 sino. 
+# HASWESTORIENTATION: Numérica discreta. Variable dummy. 1 si tiene orientación oeste, 0 sino.
+# HASBOXROOM: Numérica discreta. Variable dummy. 1 si tiene trastero, 0 sino.
+# HASWARDROBE: Numérica discreta. Variable dummy. 1 si tiene armario, 0 sino.
+# HASSWIMMINGPOOL: Numérica discreta. Variable dummy. 1 si tiene piscina, 0 sino.
+# HASDOORMAN: Numérica discreta. Variable dummy. 1 si tiene portero, 0 sino.
+# HASGARDEN: Numérica discreta. Variable dummy. 1 si tiene jardín, 0 sino.
+# ISDUPLEX: Numérica discreta. Variable dummy. 1 si es un dúplex, 0 sino.
+# ISSTUDIO: Numérica discreta. Variable dummy. 1 si es se trata de una vivienda para una persona, 0 sino.
+# ISINTOPFLOOR: Numérica discreta. Variable dummy. 1 si es se trata de una vivienda ubicada en la última planta, 0 sino.
+# CONSTRUCTIONYEAR: Numérica discreta. Año de construccón.
+# FLOORCLEAN: Numérica discreta. Planta en la que se encuentra la vivienda.
+# FLATLOCATIONID: Numérica discreta. Tipos de vistas que tiene la vivienda. 1 exterior, 2 interior.
+# CADCONSTRUCTIONYEAR: Numérica discreta. Año de construcción según catastro.
+# CADMAXBUILDINGFLOOR: Numérica discreta. Total de pisos que tiene el edificio según catastro.
+# CADDWELLINGCOUNT: Numérica discreta. Número viviendas en el edificio según catastro.
+# CADASTRALQUALITYID: Numérica discreta. Calidad catastral.
+# BUILTTYPEID_1: Numérica discreta. Variable dummy. 1 si es se trata de una vivienda de nueva construcción, 0 sino.
+# BUILTTYPEID_2: Numérica discreta. Variable dummy. 1 si es se trata de una vivienda de segunda mano par ser restaurada, 0 sino.
+# BUILTTYPEID_3: Numérica discreta. Variable dummy. 1 si es se trata de una vivienda de segunda mano en buenas condiciones, 0 sino.
+# DISTANCE_TO_CITY_CENTER: Numérica continua. km. Distancia al centro de la ciudad.
+# DISTANCE_TO_METRO: Numérica continua. km. Distancia a parada de metro
+# DISTANCE_TO_MAIN_STREET: Numérica continua. km. Distancia a calle principal.
+# LONGITUDE: Coordenada
+# LATITUDE: Coordenada
+# geometry: Lugar donde se encuentra el activo. Datos en latitud y longitud
+
+# Una vez definidas las variables y entendiendo la información que aportan, se procede a INTUIR POSIBLES relaciones entre ellas, sin qu estas conclusiones resulten definitivas, de modo que:
+
+# Quisiera comprobar si Se cumple en los 3 dataframes que UNITPRICE = PRICE/CONSTRUCTED AREA:
+
+df_Barcelona_UNITPRICE = df_Barcelona_ori$PRICE/df_Barcelona_ori$CONSTRUCTEDAREA
+df_Madrid_UNITPRICE = df_Madrid_ori$PRICE/df_Madrid_ori$CONSTRUCTEDAREA
+df_Valencia_UNITPRICE = df_Valencia_ori$PRICE/df_Valencia_ori$CONSTRUCTEDAREA
+
+# Calculo el porcentaje de diferencia entre el precio unitario al calculado como UNITPRICE = PRICE/CONSTRUCTED AREA y el proporcionado por los datasets:
+
+diff_Barcelona_UP <- (df_Barcelona_UNITPRICE - df_Barcelona_ori$UNITPRICE) / df_Barcelona_ori$UNITPRICE * 100
+diff_Madrid_UP <- (df_Madrid_UNITPRICE - df_Madrid_ori$UNITPRICE) / df_Madrid_ori$UNITPRICE * 100
+diff_Valencia_UP <- (df_Valencia_UNITPRICE - df_Valencia_ori$UNITPRICE) / df_Valencia_ori$UNITPRICE * 100
+
+max(diff_Barcelona_UP)
+max(diff_Madrid_UP)
+max(diff_Valencia_UP)
+
+# Con los máximos compruebo que las diferencias son insignificantes, por lo que puedo prescindir de la variable CONSTRUCTED AREA en todos los datasets al estar ya incluida en la variable UNITPRICE. La variable PRICE la mantengo por ser VARIABLE OBJETIVO del análisis:
+
+
+df_Barcelona_ori$CONSTRUCTEDAREA = NULL
+df_Madrid_ori$CONSTRUCTEDAREA = NULL
+df_Valencia_ori$CONSTRUCTEDAREA = NULL
+
+# Por otro lado, entiendo que si, en la observación, la variable HASPARKINGSPACE es igual a 0, también sea igual a 0 en la variable ISPARKINGSPACEINCLUDEDINPRICE, o lo que es lo mismo, que no pueda ser igual a 1. Por tanto:
+
+filtro = c("HASPARKINGSPACE","ISPARKINGSPACEINCLUDEDINPRICE")
+
+df_Barcelona_ori_filter = df_Barcelona_ori %>% select(all_of(filtro))
+df_Madrid_ori_filter = df_Madrid_ori %>% select(all_of(filtro))
+df_Valencia_ori_filter = df_Valencia_ori %>% select(all_of(filtro)) 
+
+df_Barcelona_ori_filter %>% filter(HASPARKINGSPACE == 0 & ISPARKINGSPACEINCLUDEDINPRICE == 1)
+df_Madrid_ori_filter %>% filter(HASPARKINGSPACE == 0 & ISPARKINGSPACEINCLUDEDINPRICE == 1)
+df_Valencia_ori_filter %>% filter(HASPARKINGSPACE == 0 & ISPARKINGSPACEINCLUDEDINPRICE == 1)
+
+# Se compueba que no ocurre esta circunstancia en ninguno de los 3 datasets. Por tanto, existen 3 combinaciones de datos entre estas dos variables: (0,0); (1,0) y (1,1). 
+
+# Lo que voy a hacer es fusionar estas dos variables en 1 categórica. Esta se llamará PARKING y tendrá los siguientes niveles: "WO PARKING", "PARKNING, BUT NOT INCLUDED" y "PARKING INCLUDED"
+
+df_Barcelona_ori <- df_Barcelona_ori %>%
+  mutate(PARKING = case_when(
+    HASPARKINGSPACE == 0 & ISPARKINGSPACEINCLUDEDINPRICE == 0 ~ "WO PARKING",
+    HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 0 ~ "PARKING NOT INCLUDED",
+    HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 1 ~ "PARKING INCLUDED"
+  ))
+
+df_Madrid_ori <- df_Madrid_ori %>%
+  mutate(PARKING = case_when(
+    HASPARKINGSPACE == 0 & ISPARKINGSPACEINCLUDEDINPRICE == 0 ~ "WO PARKING",
+    HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 0 ~ "PARKING NOT INCLUDED",
+    HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 1 ~ "PARKING INCLUDED"
+  ))
+
+df_Valencia_ori <- df_Valencia_ori %>%
+  mutate(PARKING = case_when(
+    HASPARKINGSPACE == 0 & ISPARKINGSPACEINCLUDEDINPRICE == 0 ~ "WO PARKING",
+    HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 0 ~ "PARKING NOT INCLUDED",
+    HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 1 ~ "PARKING INCLUDED"
+  ))
+
+df_Barcelona_ori$PARKING = as.factor(df_Barcelona_ori$PARKING)
+df_Madrid_ori$PARKING = as.factor(df_Madrid_ori$PARKING)
+df_Valencia_ori$PARKING = as.factor(df_Valencia_ori$PARKING)
+
+df_Barcelona_ori$HASPARKINGSPACE = NULL
+df_Madrid_ori$HASPARKINGSPACE = NULL
+df_Valencia_ori$HASPARKINGSPACE = NULL
+df_Barcelona_ori$ISPARKINGSPACEINCLUDEDINPRICE = NULL
+df_Madrid_ori$ISPARKINGSPACEINCLUDEDINPRICE = NULL
+df_Valencia_ori$ISPARKINGSPACEINCLUDEDINPRICE = NULL
+
+levels(df_Barcelona_ori$PARKING)
+levels(df_Madrid_ori$PARKING)
+levels(df_Valencia_ori$PARKING)
+
+# De los resultados de arriba, se observa que tampoco existen PARKINGs en las viviendas y que no estén incluidos en el precio:
+
+df_Barcelona_ori_filter %>% filter(HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 0)
+df_Madrid_ori_filter %>% filter(HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 0)
+df_Valencia_ori_filter %>% filter(HASPARKINGSPACE == 1 & ISPARKINGSPACEINCLUDEDINPRICE == 0)
+
+# De este modo, la variable categórica PARKING, podria considerarse como una variable dummy, cuyos niveles sean, con parking incluido (1) o sin parking (0), simplemente La mantengo como está.
+
+# Debido a la circunstancia anterior, pienso que not tiene sentido mantener la variable del precio del parking, por tanto, la elimino en los tres datasets:
+
+df_Barcelona_ori$PARKINGSPACEPRICE = NULL
+df_Madrid_ori$PARKINGSPACEPRICE = NULL
+df_Valencia_ori$PARKINGSPACEPRICE = NULL
+
+# Las cuatro variables siguientes se van a fusionar en una variable categórica. Estas variables son: 1) HASNORTHORIENTATION, 2) HASSOUTHORIENTATION, 3) HASEASTORIENTATION y  4) HASWESTORIENTATION.
+
+# En primer lugar, voy a comprobar que no existe ninguna observacion que tenga mas de 1 orientación, de modo que:
+
+df_Barcelona_ori$prueba_orientation = df_Barcelona_ori$HASNORTHORIENTATION+df_Barcelona_ori$HASSOUTHORIENTATION+df_Barcelona_ori$HASEASTORIENTATION+df_Barcelona_ori$HASWESTORIENTATION
+df_Madrid_ori$prueba_orientation = df_Madrid_ori$HASNORTHORIENTATION+df_Madrid_ori$HASSOUTHORIENTATION+df_Madrid_ori$HASEASTORIENTATION+df_Madrid_ori$HASWESTORIENTATION
+df_Valencia_ori$prueba_orientation = df_Valencia_ori$HASNORTHORIENTATION+df_Valencia_ori$HASSOUTHORIENTATION+df_Valencia_ori$HASEASTORIENTATION+df_Valencia_ori$HASWESTORIENTATION
+
+# Con los máximos compruebo que no existen "más de un 1" en estas variables en ninguno de los 3 datasets:
+
+max(df_Barcelona_ori$prueba_orientation)
+max(df_Madrid_ori$prueba_orientation)
+max(df_Valencia_ori$prueba_orientation)
+
+#En todos ellos, me encuentro que hay viviendas que tienen orientación en todas las orientaciones, por lo que la idea de fusionar estas variables va careciendo de sentido.
+
+#Elimino esta variable de "prueba":
+
+df_Barcelona_ori$prueba_orientation = NULL
+df_Madrid_ori$prueba_orientation = NULL
+df_Valencia_ori$prueba_orientation = NULL
+
+# Analizo ahora las variables CONSTRUCTIONYEAR y CADCONSTRUCTIONYEAR, aportan la misma información? Se comprueba:
+
+diff_Barcelona_Cons <- (df_Barcelona_ori$CONSTRUCTIONYEAR - df_Barcelona_ori$CADCONSTRUCTIONYEAR) / df_Barcelona_ori$CADCONSTRUCTIONYEAR * 100
+diff_Madrid_Cons <- (df_Madrid_ori$CONSTRUCTIONYEAR - df_Madrid_ori$CADCONSTRUCTIONYEAR) / df_Madrid_ori$CADCONSTRUCTIONYEAR * 100
+diff_Valencia_Cons <- (df_Valencia_ori$CONSTRUCTIONYEAR - df_Valencia_ori$CADCONSTRUCTIONYEAR) / df_Valencia_ori$CADCONSTRUCTIONYEAR * 100
+
+max(diff_Barcelona_Cons)
+max(diff_Madrid_Cons)
+max(diff_Valencia_Cons)
+
+# Parece que existen NAs en alguna de las dos variables, o en las dos...
+
+sum(is.na(df_Barcelona_ori$CONSTRUCTIONYEAR))
+sum(is.na(df_Barcelona_ori$CADCONSTRUCTIONYEAR))
+sum(is.na(df_Madrid_ori$CONSTRUCTIONYEAR))
+sum(is.na(df_Madrid_ori$CADCONSTRUCTIONYEAR))
+sum(is.na(df_Valencia_ori$CONSTRUCTIONYEAR))
+sum(is.na(df_Valencia_ori$CADCONSTRUCTIONYEAR))
+
+#Se comprueba que TODOS los NAs se encuentran en la variable "CONSTRUCTIONYEAR", por lo que al tener la del catastro, me quedo con esta última únicamente. Por tanto:
+
+df_Barcelona_ori$CONSTRUCTIONYEAR = NULL
+df_Madrid_ori$CONSTRUCTIONYEAR = NULL
+df_Valencia_ori$CONSTRUCTIONYEAR = NULL
+
+# Voy a reducir mi dataset eliminando las varibles CADMAXBUILDINGFLOOR y CADDWELLINGCOUNT y creando una nueva que me calcule el ratio de viviendas por piso. De modo que:
+
+# En primer luar compruebo si existen viviendas con un total de 0 pisos, con el objeto de evitar que el resultado del ratio sea igual a infinito y no me genere una discrepancia:
+
+min(df_Barcelona_ori$CADMAXBUILDINGFLOOR)
+min(df_Madrid_ori$CADMAXBUILDINGFLOOR)
+min(df_Valencia_ori$CADMAXBUILDINGFLOOR)
+
+# Se comprueba que cuando un edificio solo cuenta con el bajo, catastro considera que tiene 0 pisos. Para solventar este problema, voy a aumentar en una unidad todas las observaciones en esta variable:
+
+df_Barcelona_ori$CADMAXBUILDINGFLOOR = df_Barcelona_ori$CADMAXBUILDINGFLOOR + 1
+df_Madrid_ori$CADMAXBUILDINGFLOOR = df_Madrid_ori$CADMAXBUILDINGFLOOR + 1
+df_Valencia_ori$CADMAXBUILDINGFLOOR = df_Valencia_ori$CADMAXBUILDINGFLOOR + 1
+
+# Ahora sí, calculo el ratio
+
+df_Barcelona_ori$RATIO_VIV_PISO = df_Barcelona_ori$CADDWELLINGCOUNT/df_Barcelona_ori$CADMAXBUILDINGFLOOR
+df_Madrid_ori$RATIO_VIV_PISO = df_Madrid_ori$CADDWELLINGCOUNT/df_Madrid_ori$CADMAXBUILDINGFLOOR
+df_Valencia_ori$RATIO_VIV_PISO = df_Valencia_ori$CADDWELLINGCOUNT/df_Valencia_ori$CADMAXBUILDINGFLOOR
+
+df_Barcelona_ori$CADDWELLINGCOUNT=NULL
+df_Barcelona_ori$CADMAXBUILDINGFLOOR=NULL
+df_Madrid_ori$CADDWELLINGCOUNT=NULL
+df_Madrid_ori$CADMAXBUILDINGFLOOR=NULL
+df_Valencia_ori$CADDWELLINGCOUNT=NULL
+df_Valencia_ori$CADMAXBUILDINGFLOOR=NULL
+
+
+# Ahora pretendo fusionar las variables BUILTTYPEID_1, BUILTTYPEID_2 y BUILTTYPEID_3 en una sola. Lo primero que haré es comprobar que cuando sumo las tres variables, el resultado final en todas las observaciones es 1. De modo que:
+
+df_Barcelona_ori$prueba_BT = df_Barcelona_ori$BUILTTYPEID_1+df_Barcelona_ori$BUILTTYPEID_2+df_Barcelona_ori$BUILTTYPEID_3
+df_Madrid_ori$prueba_BT = df_Madrid_ori$BUILTTYPEID_1+df_Madrid_ori$BUILTTYPEID_2+df_Madrid_ori$BUILTTYPEID_3
+df_Valencia_ori$prueba_BT = df_Valencia_ori$BUILTTYPEID_1+df_Valencia_ori$BUILTTYPEID_2+df_Valencia_ori$BUILTTYPEID_3
+
+# Con los máximos compruebo que no existen "más de un 1" en estas variables en ninguno de los 3 datasets:
+
+max(df_Barcelona_ori$prueba_BT)
+max(df_Madrid_ori$prueba_BT)
+max(df_Valencia_ori$prueba_BT)
+min(df_Barcelona_ori$prueba_BT)
+min(df_Madrid_ori$prueba_BT)
+min(df_Valencia_ori$prueba_BT)
+
+# Se comprueba que estas 3 variables pueden ser tratadas como variables one-hot en su conjunto.
+
+df_Barcelona_ori$prueba_BT = NULL
+df_Madrid_ori$prueba_BT = NULL
+df_Valencia_ori$prueba_BT = NULL
+
+# Creo una nueva variable llamada BUILTTYPE, que englobe las tres variables anteriormente estudiadas. De modo que:
+
+df_Barcelona_ori <- df_Barcelona_ori %>%
+  mutate(BUILTTYPE = case_when(
+    BUILTTYPEID_1 == 1 ~ "NUEVA CONSTRUCCIÓN",
+    BUILTTYPEID_2 == 1 ~ "2a MANO TO BE RESTAURED",
+    BUILTTYPEID_3 == 1 ~ "2a MANO_GOOD CONDITIONS"
+  ))
+
+df_Madrid_ori <- df_Madrid_ori %>%
+  mutate(BUILTTYPE = case_when(
+    BUILTTYPEID_1 == 1 ~ "NUEVA CONSTRUCCIÓN",
+    BUILTTYPEID_2 == 1 ~ "2a MANO TO BE RESTAURED",
+    BUILTTYPEID_3 == 1 ~ "2a MANO_GOOD CONDITIONS"
+  ))
+
+df_Valencia_ori <- df_Valencia_ori %>%
+  mutate(BUILTTYPE = case_when(
+    BUILTTYPEID_1 == 1 ~ "NUEVA CONSTRUCCIÓN",
+    BUILTTYPEID_2 == 1 ~ "2a MANO TO BE RESTAURED",
+    BUILTTYPEID_3 == 1 ~ "2a MANO_GOOD CONDITIONS"
+  ))
+
+df_Barcelona_ori$BUILTTYPEID_1 = NULL
+df_Barcelona_ori$BUILTTYPEID_2 = NULL
+df_Barcelona_ori$BUILTTYPEID_3 = NULL
+df_Madrid_ori$BUILTTYPEID_1 = NULL
+df_Madrid_ori$BUILTTYPEID_2 = NULL
+df_Madrid_ori$BUILTTYPEID_3 = NULL
+df_Valencia_ori$BUILTTYPEID_1 = NULL
+df_Valencia_ori$BUILTTYPEID_2 = NULL
+df_Valencia_ori$BUILTTYPEID_3 = NULL
+
+df_Barcelona_ori$BUILTTYPE = as.factor(df_Barcelona_ori$BUILTTYPE)
+df_Madrid_ori$BUILTTYPE = as.factor(df_Madrid_ori$BUILTTYPE)
+df_Valencia_ori$BUILTTYPE = as.factor(df_Valencia_ori$BUILTTYPE)
+
+# Paso las siguientes variables a factor: AMENITYID y FLATLOCATIONID:
+
+df_Barcelona_ori <- df_Barcelona_ori %>%
+  mutate(AMENITYID = case_when(
+    AMENITYID == 1 ~ "NO COCINA NO MUEBLES",
+    AMENITYID == 2 ~ "SÍ COCINA NO MUEBLES",
+    AMENITYID == 3 ~ "SÍ COCINA Y MUEBLES"
+  ))
+
+df_Madrid_ori <- df_Madrid_ori %>%
+ mutate(AMENITYID = case_when(
+    AMENITYID == 1 ~ "NO COCINA NO MUEBLES",
+    AMENITYID == 2 ~ "SÍ COCINA NO MUEBLES",
+    AMENITYID == 3 ~ "SÍ COCINA Y MUEBLES"
+  ))
+
+df_Valencia_ori <- df_Valencia_ori %>%
+  mutate(AMENITYID = case_when(
+    AMENITYID == 1 ~ "NO COCINA NO MUEBLES",
+    AMENITYID == 2 ~ "SÍ COCINA NO MUEBLES",
+    AMENITYID == 3 ~ "SÍ COCINA Y MUEBLES"
+  ))
+
+df_Barcelona_ori <- df_Barcelona_ori %>%
+  mutate(FLATLOCATIONID = case_when(
+    FLATLOCATIONID == 1 ~ "EXTERIOR",
+    FLATLOCATIONID == 2 ~ "INTERIOR"
+  ))
+
+df_Madrid_ori <- df_Madrid_ori %>%
+  mutate(FLATLOCATIONID = case_when(
+    FLATLOCATIONID == 1 ~ "EXTERIOR",
+    FLATLOCATIONID == 2 ~ "INTERIOR"
+  ))
+
+df_Valencia_ori <- df_Valencia_ori %>%
+  mutate(FLATLOCATIONID = case_when(
+    FLATLOCATIONID == 1 ~ "EXTERIOR",
+    FLATLOCATIONID == 2 ~ "INTERIOR"
+  ))
+
+df_Barcelona_ori %<>%
+  mutate( AMENITYID        = as.factor(AMENITYID)) %>%
+  mutate( FLATLOCATIONID = as.factor(FLATLOCATIONID))
+
+df_Madrid_ori %<>%
+  mutate( AMENITYID        = as.factor(AMENITYID)) %>%
+  mutate( FLATLOCATIONID = as.factor(FLATLOCATIONID))
+
+df_Valencia_ori %<>%
+  mutate( AMENITYID        = as.factor(AMENITYID)) %>%
+  mutate( FLATLOCATIONID = as.factor(FLATLOCATIONID))
+
+# Convierto a factor todas las variables dummies / numéricas discretas que quedan por convertir a factor:
+
+df_Barcelona_ori %<>%
+  mutate( PERIOD        = as.factor(PERIOD)) %>%
+  mutate( ROOMNUMBER = as.factor(ROOMNUMBER)) %>%
+  mutate( BATHNUMBER = as.factor(BATHNUMBER)) %>%
+  mutate( HASTERRACE = as.factor(HASTERRACE)) %>%
+  mutate( HASLIFT = as.factor(HASLIFT)) %>%
+  mutate( HASAIRCONDITIONING = as.factor(HASAIRCONDITIONING)) %>%
+  mutate( HASNORTHORIENTATION = as.factor(HASNORTHORIENTATION)) %>%
+  mutate( HASSOUTHORIENTATION = as.factor(HASSOUTHORIENTATION)) %>%
+  mutate( HASEASTORIENTATION = as.factor(HASEASTORIENTATION)) %>%
+  mutate( HASWESTORIENTATION = as.factor(HASWESTORIENTATION)) %>%
+  mutate( HASBOXROOM = as.factor(HASBOXROOM)) %>%
+  mutate( HASWARDROBE = as.factor(HASWARDROBE)) %>%
+  mutate( HASSWIMMINGPOOL = as.factor(HASSWIMMINGPOOL)) %>%
+  mutate( HASDOORMAN = as.factor(HASDOORMAN)) %>%
+  mutate( HASGARDEN = as.factor(HASGARDEN)) %>%
+  mutate( ISDUPLEX = as.factor(ISDUPLEX)) %>%
+  mutate( ISSTUDIO = as.factor(ISSTUDIO)) %>%
+  mutate( ISINTOPFLOOR = as.factor(ISINTOPFLOOR)) %>%
+  mutate( FLOORCLEAN = as.factor(FLOORCLEAN)) %>%
+  mutate( CADCONSTRUCTIONYEAR = as.factor(CADCONSTRUCTIONYEAR)) %>%
+  mutate( CADASTRALQUALITYID = as.factor(CADASTRALQUALITYID))
+
+df_Madrid_ori %<>%
+  mutate( PERIOD        = as.factor(PERIOD)) %>%
+  mutate( ROOMNUMBER = as.factor(ROOMNUMBER)) %>%
+  mutate( BATHNUMBER = as.factor(BATHNUMBER)) %>%
+  mutate( HASTERRACE = as.factor(HASTERRACE)) %>%
+  mutate( HASLIFT = as.factor(HASLIFT)) %>%
+  mutate( HASAIRCONDITIONING = as.factor(HASAIRCONDITIONING)) %>%
+  mutate( HASNORTHORIENTATION = as.factor(HASNORTHORIENTATION)) %>%
+  mutate( HASSOUTHORIENTATION = as.factor(HASSOUTHORIENTATION)) %>%
+  mutate( HASEASTORIENTATION = as.factor(HASEASTORIENTATION)) %>%
+  mutate( HASWESTORIENTATION = as.factor(HASWESTORIENTATION)) %>%
+  mutate( HASBOXROOM = as.factor(HASBOXROOM)) %>%
+  mutate( HASWARDROBE = as.factor(HASWARDROBE)) %>%
+  mutate( HASSWIMMINGPOOL = as.factor(HASSWIMMINGPOOL)) %>%
+  mutate( HASDOORMAN = as.factor(HASDOORMAN)) %>%
+  mutate( HASGARDEN = as.factor(HASGARDEN)) %>%
+  mutate( ISDUPLEX = as.factor(ISDUPLEX)) %>%
+  mutate( ISSTUDIO = as.factor(ISSTUDIO)) %>%
+  mutate( ISINTOPFLOOR = as.factor(ISINTOPFLOOR)) %>%
+  mutate( FLOORCLEAN = as.factor(FLOORCLEAN)) %>%
+  mutate( CADCONSTRUCTIONYEAR = as.factor(CADCONSTRUCTIONYEAR)) %>%
+  mutate( CADASTRALQUALITYID = as.factor(CADASTRALQUALITYID))
+
+df_Valencia_ori %<>%
+  mutate( PERIOD        = as.factor(PERIOD)) %>%
+  mutate( ROOMNUMBER = as.factor(ROOMNUMBER)) %>%
+  mutate( BATHNUMBER = as.factor(BATHNUMBER)) %>%
+  mutate( HASTERRACE = as.factor(HASTERRACE)) %>%
+  mutate( HASLIFT = as.factor(HASLIFT)) %>%
+  mutate( HASAIRCONDITIONING = as.factor(HASAIRCONDITIONING)) %>%
+  mutate( HASNORTHORIENTATION = as.factor(HASNORTHORIENTATION)) %>%
+  mutate( HASSOUTHORIENTATION = as.factor(HASSOUTHORIENTATION)) %>%
+  mutate( HASEASTORIENTATION = as.factor(HASEASTORIENTATION)) %>%
+  mutate( HASWESTORIENTATION = as.factor(HASWESTORIENTATION)) %>%
+  mutate( HASBOXROOM = as.factor(HASBOXROOM)) %>%
+  mutate( HASWARDROBE = as.factor(HASWARDROBE)) %>%
+  mutate( HASSWIMMINGPOOL = as.factor(HASSWIMMINGPOOL)) %>%
+  mutate( HASDOORMAN = as.factor(HASDOORMAN)) %>%
+  mutate( HASGARDEN = as.factor(HASGARDEN)) %>%
+  mutate( ISDUPLEX = as.factor(ISDUPLEX)) %>%
+  mutate( ISSTUDIO = as.factor(ISSTUDIO)) %>%
+  mutate( ISINTOPFLOOR = as.factor(ISINTOPFLOOR)) %>%
+  mutate( FLOORCLEAN = as.factor(FLOORCLEAN)) %>%
+  mutate( CADCONSTRUCTIONYEAR = as.factor(CADCONSTRUCTIONYEAR)) %>%
+  mutate( CADASTRALQUALITYID = as.factor(CADASTRALQUALITYID))
+  
+# Trato ahora las variables: LONGITUDE, LATITUDE y geometry.
+
+# Creo a partir de las variables LONGITUDE y LATITUDE, otra que se llame zona y que tenga los siguientes niveles: SO, S, SE, O, C, E, NO, N y NE, de modo que:
+
+df_Barcelona_ori$ZONE = as.factor(determinar_zona(df_Barcelona_ori$LONGITUDE,df_Barcelona_ori$LATITUDE))
+df_Madrid_ori$ZONE = as.factor(determinar_zona(df_Madrid_ori$LONGITUDE,df_Madrid_ori$LATITUDE))
+df_Valencia_ori$ZONE = as.factor(determinar_zona(df_Valencia_ori$LONGITUDE,df_Valencia_ori$LATITUDE))
+
+# Creo una nueva variable en cada dataset para identificar cada dataset:
+
+n <- nrow(df_Barcelona_ori)
+df_Barcelona_ori$IDOBS <- as.factor(paste0("BAR_", 1:n))
+
+n <- nrow(df_Madrid_ori)
+df_Madrid_ori$IDOBS <- as.factor(paste0("MAD_", 1:n))
+
+n <- nrow(df_Valencia_ori)
+df_Valencia_ori$IDOBS <- as.factor(paste0("VAL_", 1:n))
+
+# Creo ahora dataframes paralelos que me eliminen estas variables. No obstante, mantendré los dataframes originales para, posteriormente, representar las observaciones en un mapa. De este modo:
+
+# Elimino en primer lugar la variable geometry:
+
+df_Barcelona_semiDEF = df_Barcelona_ori %>% select(-geometry)
+df_Madrid_semiDEF = df_Madrid_ori %>% select(-geometry)
+df_Valencia_semiDEF = df_Valencia_ori %>% select(-geometry)
+
+# Elimino de estos dataframes las variables LONGITUDE y LATITUDE:
+
+df_Barcelona_semiDEF$LONGITUDE = NULL
+df_Barcelona_semiDEF$LATITUDE = NULL
+df_Madrid_semiDEF$LONGITUDE = NULL
+df_Madrid_semiDEF$LATITUDE = NULL
+df_Valencia_semiDEF$LONGITUDE = NULL
+df_Valencia_semiDEF$LATITUDE = NULL
+
+```
+
+<h1 style="font-size:25px;"><b> 1.3. PRE-PROCESADO - Comprobación variable ZONE </b></h1>
+
+```{r 1.3. PRE-PROCESADO - Comprobación variable ZONE}
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+barcelona_map <- get_map(location = 'spain', zoom = 6)
+
+punto = df_Barcelona_ori [,c("LONGITUDE","LATITUDE","ZONE")]
+ggmap(barcelona_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = ZONE), size = 0.5) +
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+madrid_map <- get_map(location = 'madrid', zoom = 12)
+
+punto = df_Madrid_ori [,c("LONGITUDE","LATITUDE","ZONE")]
+ggmap(madrid_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = ZONE), size = 0.5) +
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+valencia_map <- get_map(location = 'valencia', zoom = 13)
+
+punto = df_Valencia_ori [,c("LONGITUDE","LATITUDE","ZONE")]
+ggmap(valencia_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = ZONE), size = 0.5) +
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+# Se comprueba que la variable ZONE funciona correctamente para los 3 datasets
+
+```
+
+<h1 style="font-size:25px;"><b> 1.4. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Observaciones repetidas </b></h1>
+
+```{r 1.4. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Observaciones repetidas}
+
+# En primer lugar, voy a eliminar todas aquellas observaciones que estén repetidas en los 3 datasets:
+
+OBS_PREV_BARCELONA = dim (df_Barcelona_semiDEF)[1]
+OBS_PREV_MADRID = dim (df_Madrid_semiDEF)[1]
+OBS_PREV_VALENCIA = dim (df_Valencia_semiDEF)[1]
+OBS_PREV = c(OBS_PREV_BARCELONA,OBS_PREV_MADRID,OBS_PREV_VALENCIA)
+
+df_Barcelona_semiDEF %<>% 
+  distinct() %>%
+  as.data.table()
+
+df_Madrid_semiDEF %<>% 
+  distinct() %>%
+  as.data.table()
+
+df_Valencia_semiDEF %<>% 
+  distinct() %>%
+  as.data.table()
+
+OBS_POST_BARCELONA = dim (df_Barcelona_semiDEF)[1]
+OBS_POST_MADRID = dim (df_Madrid_semiDEF)[1]
+OBS_POST_VALENCIA = dim (df_Valencia_semiDEF)[1]
+OBS_POST = c(OBS_POST_BARCELONA,OBS_POST_MADRID,OBS_POST_VALENCIA)
+
+OBS = data.frame (cbind(Previo = OBS_PREV,Post = OBS_POST,DIFF = OBS_PREV-OBS_POST))
+rownames(OBS) = c("Barcelona", "Madrid", "Valencia")
+
+OBS %>% kbl(caption = "Comparativa dif variables") %>% kable_minimal()
+
+# Por lo que se comprueba que no existen observaciones repetidas en ningun datasets.
+
+```
+
+<h1 style="font-size:25px;"><b> 1.5. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Estudio variables categóricas </b></h1>
+
+```{r 1.5. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Estudio variables categóricas}
+
+# Elimino aquellas variables categóricas que no tiene sentido incluir para este análisis, de modo que:
+
+df_Barcelona_semiDEF_filtered = df_Barcelona_semiDEF %>% 
+  select(-ASSETID, -CADCONSTRUCTIONYEAR,-IDOBS)
+df_Madrid_semiDEF_filtered = df_Madrid_semiDEF %>% 
+  select(-ASSETID, -CADCONSTRUCTIONYEAR,-IDOBS)
+df_Valencia_semiDEF_filtered = df_Valencia_semiDEF %>% 
+  select(-ASSETID, -CADCONSTRUCTIONYEAR,-IDOBS)
+
+x <- inspect_cat(df_Barcelona_semiDEF_filtered)
+show_plot(x)
+x <- inspect_cat(df_Madrid_semiDEF_filtered)
+show_plot(x)
+x <- inspect_cat(df_Valencia_semiDEF_filtered)
+show_plot(x)
+
+x <- inspect_imb(df_Barcelona_semiDEF_filtered)
+show_plot(x)
+
+x <- inspect_imb(df_Madrid_semiDEF_filtered)
+show_plot(x)
+
+x <- inspect_imb(df_Valencia_semiDEF_filtered)
+show_plot(x)
+
+# Conclusiones que saco de estos gráficos:
+
+# - En los 3 datasets se aprecian valores NAs en las variables FLATLOCATIONID y FLOORCLEAN.
+# - Las variables ISDUPLEX, ISSTUDIO y ISINTOPFLOOR presentan un nivel mayoritario muy destacado en los tres datasets, por lo que considero que no tiene sentido seguir contando con estas variables en el análisis:
+
+df_Barcelona_semiDEF$ISDUPLEX = NULL
+df_Barcelona_semiDEF$ISSTUDIO = NULL
+df_Barcelona_semiDEF$ISINTOPFLOOR = NULL
+
+df_Madrid_semiDEF$ISDUPLEX = NULL
+df_Madrid_semiDEF$ISSTUDIO = NULL
+df_Madrid_semiDEF$ISINTOPFLOOR = NULL
+
+df_Valencia_semiDEF$ISDUPLEX = NULL
+df_Valencia_semiDEF$ISSTUDIO = NULL
+df_Valencia_semiDEF$ISINTOPFLOOR = NULL
+
+```
+
+<h1 style="font-size:25px;"><b> 1.6. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Correlación variables numéricas </b></h1>
+
+```{r 1.6. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Correlación variables numéricas}
+
+# Tomo dataframes con variables numéricas únicamente:
+
+df_Barcelona_semiDEF_cor = df_Barcelona_semiDEF %>% 
+  select(PRICE,UNITPRICE,RATIO_VIV_PISO,DISTANCE_TO_CITY_CENTER,DISTANCE_TO_METRO,DISTANCE_TO_MAIN_STREET)
+
+df_Madrid_semiDEF_cor = df_Madrid_semiDEF %>% 
+  select(PRICE,UNITPRICE,RATIO_VIV_PISO,DISTANCE_TO_CITY_CENTER,DISTANCE_TO_METRO,DISTANCE_TO_MAIN_STREET)
+
+df_Valencia_semiDEF_cor = df_Valencia_semiDEF %>% 
+  select(PRICE,UNITPRICE,RATIO_VIV_PISO,DISTANCE_TO_CITY_CENTER,DISTANCE_TO_METRO,DISTANCE_TO_MAIN_STREET)
+
+# Calculo las correlaciones de cada dataset:
+
+correlacion_pearson_df_Bar = cor(df_Barcelona_semiDEF_cor, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df_Bar,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+correlacion_pearson_df_Mad = cor(df_Madrid_semiDEF_cor, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df_Mad,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+correlacion_pearson_df_Val = cor(df_Valencia_semiDEF_cor, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df_Val,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+# Conclusiones sacadas tras este análisis:
+
+# - La variable UNITPRCE Y PRICE presentan una alta correlación negativa con las variables que indican distancias al centro de la ciudad. Tiene sentido. Este fenómeno se repite en los 3 datasets.
+
+# - Como no puede ser de otra manera, la distancia a la calle principal tiene una correlación positiva y alta con la distancia al centro, puesto que son, las 3, calles céntricas de estas ciudades.
+
+# - Otra circunstancia que se contempla en las ciudades de Madrid y Valencia es que las distancias al metro, disminuyen cuanto mñas me aproximo al centro. Esto se debe a la concentración de paradas en las áreas céntricas de estas ciudades. 
+
+# - Lo anterior no se aprecia tanto en Barcelona, donde las distancias al metro y las distancias al centro/calle prrincipal apenas tienen correlación. Esto se deberá principalmente a la proximidad que tiene la ciudad de Barcelona a la costa, lo que impide que esta se expanda por la zona "ESTE".
+
+# - Como no puede ser de otra manera, las variables PRICE y UNITPRICE presentan una correlación positiva muy importante.
+
+```
+
+<h1 style="font-size:25px;"><b> 1.7. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Memoria usada variables </b></h1>
+
+```{r 1.7. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Memoria usada variables}
+
+x <- inspect_mem(df_Barcelona_semiDEF)
+show_plot(x)
+
+x <- inspect_mem(df_Madrid_semiDEF)
+show_plot(x)
+
+x <- inspect_mem(df_Valencia_semiDEF)
+show_plot(x)
+
+# Se observa que la variable ASSETID es la que ocupa mayor cantidad de espacio. Se elimina puesto que ya tengo la variable IDOBS que puede sustituir a esta perfectamente.
+
+df_Barcelona_semiDEF$ASSETID = NULL
+df_Madrid_semiDEF$ASSETID = NULL
+df_Valencia_semiDEF$ASSETID = NULL
+
+```
+
+<h1 style="font-size:25px;"><b> 1.8. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Datos Ausentes </b></h1>
+
+```{r 1.8. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Datos Ausentes}
+
+x <- inspect_na(df_Barcelona_semiDEF)
+show_plot(x)
+
+x <- inspect_na(df_Madrid_semiDEF)
+show_plot(x)
+
+x <- inspect_na(df_Valencia_semiDEF)
+show_plot(x)
+
+# Dado que contamos con una gran cantidad de observaciones en cada una de los datasets, procedo a eliminar todas las instancias que tenga, al menos, un dato ausente, de modo que:
+
+df_Barcelona_semiDEF <- na.omit(df_Barcelona_semiDEF)
+df_Madrid_semiDEF <- na.omit(df_Madrid_semiDEF)
+df_Valencia_semiDEF <- na.omit(df_Valencia_semiDEF)
+
+#Compruebo que ya no hay datos ausentes en ninguno de los 3 datasets:
+
+sum(is.na(df_Barcelona_semiDEF))
+sum(is.na(df_Madrid_semiDEF))
+sum(is.na(df_Valencia_semiDEF))
+
+```
+
+<h1 style="font-size:25px;"><b> 1.9. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Histogramas variables numérica </b></h1>
+
+```{r 1.9. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Histogramas variables numéricas}
+
+x <- inspect_num(df_Barcelona_semiDEF)
+show_plot(x)
+
+x <- inspect_num(df_Madrid_semiDEF)
+show_plot(x)
+
+x <- inspect_num(df_Valencia_semiDEF)
+show_plot(x)
+
+# Se aprecian importantes outliers en las siguientes variables de los diferentes datasets:
+
+# - Barcelona: Distancia a Metro, Ratio Vivienda/Pisos y PRICE.
+# - Madrid: Distancia al centro, distancia a calle principal, distancia a metro, ratio Vivienda/Pisos y PRICE
+# - Valencia: Ratio Vivienda/Pisos, unitprice y PRICE
+
+```
+
+<h1 style="font-size:25px;"><b> 1.10. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Tratamiento de valores ausentes </b></h1>
+
+```{r 1.10. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Tratamiento de valores ausentes}
+
+#Se eliminan las observaciones de las variables sobre las cuales se aprociaban outliers
+
+df_Barcelona_semiDEF = outliers_univariantes (df_Barcelona_semiDEF,"DISTANCE_TO_METRO")
+df_Barcelona_semiDEF = outliers_univariantes (df_Barcelona_semiDEF,"RATIO_VIV_PISO")
+df_Barcelona_semiDEF = outliers_univariantes (df_Barcelona_semiDEF,"PRICE")
+
+df_Madrid_semiDEF = outliers_univariantes (df_Madrid_semiDEF,"RATIO_VIV_PISO")
+df_Madrid_semiDEF = outliers_univariantes (df_Madrid_semiDEF,"DISTANCE_TO_CITY_CENTER")
+df_Madrid_semiDEF = outliers_univariantes (df_Madrid_semiDEF,"DISTANCE_TO_METRO")
+df_Madrid_semiDEF = outliers_univariantes (df_Madrid_semiDEF,"DISTANCE_TO_MAIN_STREET")
+df_Madrid_semiDEF = outliers_univariantes (df_Madrid_semiDEF,"PRICE")
+
+df_Valencia_semiDEF = outliers_univariantes (df_Valencia_semiDEF,"RATIO_VIV_PISO")
+df_Valencia_semiDEF = outliers_univariantes (df_Valencia_semiDEF,"UNITPRICE")
+df_Valencia_semiDEF = outliers_univariantes (df_Valencia_semiDEF,"PRICE")
+
+# Ahora represento para cada dataset las variables que presentan mayor número de outliers tras la última actuación:
+
+UP_Bar = outliers(df_Barcelona_semiDEF,"UNITPRICE")
+Ratio_VP_Bar =outliers(df_Barcelona_semiDEF,"RATIO_VIV_PISO")
+Dist_Center_Bar =outliers(df_Barcelona_semiDEF,"DISTANCE_TO_CITY_CENTER")
+Dist_Metro_Bar =outliers(df_Barcelona_semiDEF,"DISTANCE_TO_METRO")
+Dist_MS_Bar =outliers(df_Barcelona_semiDEF,"DISTANCE_TO_MAIN_STREET")
+Price_Bar =outliers(df_Barcelona_semiDEF,"PRICE")
+
+UP_Mad = outliers(df_Madrid_semiDEF,"UNITPRICE")
+Ratio_VP_Mad =outliers(df_Madrid_semiDEF,"RATIO_VIV_PISO")
+Dist_Center_Mad =outliers(df_Madrid_semiDEF,"DISTANCE_TO_CITY_CENTER")
+Dist_Metro_Mad =outliers(df_Madrid_semiDEF,"DISTANCE_TO_METRO")
+Dist_MS_Mad =outliers(df_Madrid_semiDEF,"DISTANCE_TO_MAIN_STREET")
+Price_Mad =outliers(df_Madrid_semiDEF,"PRICE")
+
+UP_Val = outliers(df_Valencia_semiDEF,"UNITPRICE")
+Ratio_VP_Val =outliers(df_Valencia_semiDEF,"RATIO_VIV_PISO")
+Dist_Center_Val =outliers(df_Valencia_semiDEF,"DISTANCE_TO_CITY_CENTER")
+Dist_Metro_Val =outliers(df_Valencia_semiDEF,"DISTANCE_TO_METRO")
+Dist_MS_Val =outliers(df_Valencia_semiDEF,"DISTANCE_TO_MAIN_STREET")
+Price_Val =outliers(df_Valencia_semiDEF,"PRICE")
+
+
+Var_outl = c("UNITPRICE","RATIO_VIV_PISO","DISTANCE_TO_CITY_CENTER","DISTANCE_TO_METRO","DISTANCE_TO_MAIN_STREET","PRICE")
+Perc_outl_Bar = c(UP_Bar,Ratio_VP_Bar,Dist_Center_Bar,Dist_Metro_Bar,Dist_MS_Bar,Price_Bar)/dim(df_Barcelona_semiDEF)[1] * 100
+Perc_outl_Mad = c(UP_Mad,Ratio_VP_Mad,Dist_Center_Mad,Dist_Metro_Mad,Dist_MS_Mad,Price_Mad)/dim(df_Madrid_semiDEF)[1] * 100
+Perc_outl_Val = c(UP_Val,Ratio_VP_Val,Dist_Center_Val,Dist_Metro_Val,Dist_MS_Val,Price_Val)/dim(df_Valencia_semiDEF)[1] * 100
+
+data_OUT_Bar = data.frame(Variables = Var_outl, Porcentaje_Outliers = Perc_outl_Bar)
+data_OUT_Bar_sorted = data_OUT_Bar %>%
+  arrange(desc(Porcentaje_Outliers))
+
+data_OUT_Bar_sorted %>% kbl(caption = "Conjunto ouliers ordenados - Barcelona") %>% kable_minimal()
+
+data_OUT_Mad = data.frame(Variables = Var_outl, Porcentaje_Outliers = Perc_outl_Mad)
+data_OUT_Mad_sorted = data_OUT_Mad %>%
+  arrange(desc(Porcentaje_Outliers))
+
+data_OUT_Mad_sorted %>% kbl(caption = "Conjunto ouliers ordenados - Madrid") %>% kable_minimal()
+
+data_OUT_Val = data.frame(Variables = Var_outl, Porcentaje_Outliers = Perc_outl_Val)
+data_OUT_Val_sorted = data_OUT_Val %>%
+  arrange(desc(Porcentaje_Outliers))
+
+data_OUT_Val_sorted %>% kbl(caption = "Conjunto ouliers ordenados - Valencia") %>% kable_minimal()
+
+# Ahora ninguna de las variables de los 3 datasets presentan outliers por encima del 6%, con lo cual, no sigo incidiendo sobre los outliers. Veamos de nuevo los histogramas:
+
+x <- inspect_num(df_Barcelona_semiDEF)
+show_plot(x)
+
+x <- inspect_num(df_Madrid_semiDEF)
+show_plot(x)
+
+x <- inspect_num(df_Valencia_semiDEF)
+show_plot(x)
+
+# Se observa una notable mejoria de las gráficas. Si bien es cierto, siguen apareciendo outliers en algunas variables numéricas, debido a la asimetría de las gráficas.
+
+```
+
+<h1 style="font-size:25px;"><b> 1.11. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Representación variables </b></h1>
+
+```{r 1.11. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Representación variables}
+
+x <- inspect_types(df_Barcelona_semiDEF)
+show_plot(x)
+
+x <- inspect_types(df_Madrid_semiDEF)
+show_plot(x)
+
+x <- inspect_types(df_Valencia_semiDEF)
+show_plot(x)
+
+# Como no puede ser de otra manera, este esquema se repite para los 3 datasets: 30 variables en total, 6 numéricas y 24 categóricas.
+
+```
+
+<h1 style="font-size:25px;"><b> 1.12. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Visualización de Datos Espaciales </b></h1>
+
+```{r 1.12. PRE-PROCESADO - EDA (Exploratory Data Analysis) - Visualización de Datos Espaciales}
+
+# Procedo a representar en los planos anteriormente mostrados diferentes variables qie pueden resultar de interés:
+
+# Para ello, lo primero que haré será eliminar aquellas observaciones de los datasets originales que ha sido eliminadas en pasos anteriores en el dataset "paralelo". De modo que:
+
+df_Barcelona_ori_wo_OUT_NA <- semi_join(df_Barcelona_ori, df_Barcelona_semiDEF, by = "IDOBS")
+df_Madrid_ori_wo_OUT_NA <- semi_join(df_Madrid_ori, df_Madrid_semiDEF, by = "IDOBS")
+df_Valencia_ori_wo_OUT_NA <- semi_join(df_Valencia_ori, df_Valencia_semiDEF, by = "IDOBS")
+
+# Represento ahora en el mapa la variable categórica: CADASTRALQUALITYID --> Índice de calidad según catastro.
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+barcelona_map <- get_map(location = 'barcelona', zoom = 13)
+
+punto = df_Barcelona_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","CADASTRALQUALITYID")]
+ggmap(barcelona_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = CADASTRALQUALITYID), size = 0.5) +
+  theme(legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14)) + 
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+madrid_map <- get_map(location = 'madrid', zoom = 12)
+
+punto = df_Madrid_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","CADASTRALQUALITYID")]
+ggmap(madrid_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = CADASTRALQUALITYID), size = 0.5) +
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5)))  
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+valencia_map <- get_map(location = 'valencia', zoom = 13)
+
+punto = df_Valencia_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","CADASTRALQUALITYID")]
+ggmap(valencia_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = CADASTRALQUALITYID), size = 0.5) +
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+# Conclusiones:
+
+# - En Barcelona: 1) Parece que las viviendas que se encuentran en la zona Sureste, tienen un úndice de calidad mayor, 2) Por otro lado, las viviendas más al Oeste, presentan un índice de calidad menor.
+
+# - En Madrid: 1) Parece que las viviendas que se encuentran en la perifería tienen un úndice de calidad mayor, 2) Por otro lado, las viviendas más céntricas, presentan un índice de calidad menor.
+
+# - En Valencia: Un escenario muy parecido al de Madrid: 1) Parece que las viviendas que se encuentran en la perifería tienen un úndice de calidad mayor, 2) Por otro lado, las viviendas más céntricas, presentan un índice de calidad menor.
+
+# Represento ahora en el mapa las variable numéricas: UNITPRICE y PRICE
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+barcelona_map <- get_map(location = 'barcelona', zoom = 13)
+
+punto = df_Barcelona_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","UNITPRICE")]
+ggmap(barcelona_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = UNITPRICE), size = 0.2) +
+  scale_color_gradient(low = "lightblue", high = "red") + 
+  theme(legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14)) + 
+  guides(color = guide_legend(override.aes = list(size = 5)))
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+barcelona_map <- get_map(location = 'barcelona', zoom = 13)
+
+punto = df_Barcelona_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","PRICE")]
+ggmap(barcelona_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = PRICE), size = 0.2) +
+  scale_color_gradient(low = "lightblue", high = "red") + 
+  theme(legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14)) + 
+  guides(color = guide_legend(override.aes = list(size = 5)))
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+madrid_map <- get_map(location = 'madrid', zoom = 12)
+
+punto = df_Madrid_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","UNITPRICE")]
+ggmap(madrid_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = UNITPRICE), size = 0.2) +
+  scale_color_gradient(low = "lightblue", high = "red") +  
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5)))  
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+madrid_map <- get_map(location = 'madrid', zoom = 12)
+
+punto = df_Madrid_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","PRICE")]
+ggmap(madrid_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = PRICE), size = 0.2) +
+  scale_color_gradient(low = "lightblue", high = "red") + 
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5)))  
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+valencia_map <- get_map(location = 'valencia', zoom = 13)
+
+punto = df_Valencia_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","UNITPRICE")]
+ggmap(valencia_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = UNITPRICE), size = 0.2) +
+ scale_color_gradient(low = "lightblue", high = "red") + 
+   theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+
+register_google(key = "AIzaSyAk663sovuIx85NoETCDtx3pOQ9hzuRdC4")
+valencia_map <- get_map(location = 'valencia', zoom = 13)
+
+punto = df_Valencia_ori_wo_OUT_NA [,c("LONGITUDE","LATITUDE","PRICE")]
+ggmap(valencia_map) +
+  geom_point(data = punto, aes(x = LONGITUDE, y = LATITUDE, color = PRICE), size = 0.2) +
+  scale_color_gradient(low = "lightblue", high = "red") + 
+  theme(
+    legend.text = element_text(size = 12), 
+    legend.title = element_text(size = 14)  
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 5))) 
+
+
+# Conclusiones:
+
+# - En Barcelona: 1) Los precios por m2 más altos se concentran en la franja central horizontal de la ciudad, 2) Sin embargo, los precios más altos se concentran en las zonas céntricas de la ciudad y al oeste de la misma.
+
+# - En Madrid: 1) Los precios por m2 más altos se concentran en el centro de la ciudad, 2) Sin embargo, los precios más altos, además de en el centro, también se pueden encontrar en el norte de la ciudad.
+
+# - En Valencia: Los precios por m2 y los precios totales se concentran en la zona céntrica de la ciudad y muy próxima al rio. Ambas variables presentan una distribución muy pareja, de ahí su alta correlación positiva en este dataset.
+
+# Unaa vez, analizadas los 3 datasets procede a decidir si procesar estos conjuntos de forma agrupada o por separado.
+
+```
+
+<h1 style="font-size:25px;"><b> 1.13. PRE-PROCESADO - ¿Procesado del conjunto de datos agrupados o por separado? </b></h1>
+
+```{r 1.13. PRE-PROCESADO - ¿Procesado del conjunto de datos agrupados o por separado?}
+
+# Para tomar esta decisión, voy a tomar los siguietens criterios:
+
+# 1) Objetivo del Análisis: Según el enunciado --> "El objetivo general de la evaluación es aprender a implementar los modelos de DataScience explicados en el módulo 5. Para este fin se ha escogido una base de datos del 2018 para predecir el precio de casas el mercado español (PRICE)". Basándome en esta frase y según mi criterio, se puede crear una nueva variable categórica que se llame CITY y que tenga como niveles: "Barcelona", "Madrid" y "Valencia".
+
+# 2) Homogeneidad de los Datos: Las variables en los tres datasets son las mismas, medidas con la misma unidad y en el mismo orden de magnitud.
+
+# 3) Tamaño del Dataset: El número de observaciones en cada dataset es muy grande, pero se podría hacer una selección aleatoria de cada conjunto de datos de un número determinado de instancias. Este número sería el mismo en los tres conjunto con el objeto de que la muestra quede balanceada en función de la ciudad de estudio.
+
+# 4) Modelos estadísticos: Considero que un modelo conjunto puede entender bien el objetivo y saber proporcionarme los resultados de manera correcta.
+
+# Como comentaba anteriormente, lo que voy a hacer será: 1) Crear nueva variable para identificar la ciudad y 2) crear una muestra con instancias aleatorias de cada datasets:
+
+df_Barcelona_semiDEF$CITY = "Barcelona"
+df_Barcelona_semiDEF$CITY = as.factor(df_Barcelona_semiDEF$CITY)
+
+df_Madrid_semiDEF$CITY = "Madrid"
+df_Madrid_semiDEF$CITY = as.factor(df_Madrid_semiDEF$CITY)
+
+df_Valencia_semiDEF$CITY = "Valencia"
+df_Valencia_semiDEF$CITY = as.factor(df_Valencia_semiDEF$CITY)
+
+set.seed(123)
+muestra_barcelona <- df_Barcelona_semiDEF %>% 
+  sample_n(1000, replace = FALSE) # replace = FALSE asegura que no se seleccionen observaciones duplicadas
+
+set.seed(123)
+muestra_madrid <- df_Madrid_semiDEF %>% 
+  sample_n(1000, replace = FALSE) # replace = FALSE asegura que no se seleccionen observaciones duplicadas
+
+set.seed(123)
+muestra_valencia <- df_Valencia_semiDEF %>% 
+  sample_n(1000, replace = FALSE) # replace = FALSE asegura que no se seleccionen observaciones duplicadas
+
+df_Viviendas_Agrupado = rbind(muestra_barcelona,muestra_madrid,muestra_valencia)
+
+str(df_Viviendas_Agrupado)
+summary(df_Viviendas_Agrupado)
+
+# Una vez considero que se han realizado todos los tratamientos necesarios, pasamos a la parte de proceso de modelización. Comiemzp con "AutoML" (Machine Learning Automatizado) con H2O el cual va a automatizar el proceso de construcción de modelos de aprendizaje automático, es decir, se busca crear un modelo base que nos sirva de referencia con múltiples objetivos usando un AutoML con H2O. H2O usará todos los algoritmos excepto GLM y StackedEnsemble.
+
+# Antes de comenzar con los modelos, elimino la variable IDOBS puesto que no aporta importante para los modelos y además ocupa mucha memoria:
+
+df_Viviendas_Agrupado$IDOBS = NULL
+
+```
+
+<h1 style="font-size:25px;"><b> 2.1. MODELOS - Modelo Inicial H2O </b></h1>
+
+```{r 2.1. MODELOS - Modelo Inicial H2O}
+
+
+if (entrena  == 0) {
+# H2O es una plataforma de código abierto que ofrece varias funcionalidades avanzadas para análisis de datos y aprendizaje automático, y su función de AutoML permite a los usuarios generar modelos de aprendizaje automático de manera eficiente. No requiere de un conocimiento muy profundo del algoritmo que emplea el modelo para la variación de los parámetros.
+
+# Inicializo H2O:
+
+h2o.init()
+
+# Se manipulan y preparan los datos para entrenar un modelo de machine learning.
+
+h2o.no_progress()
+data   <- as.h2o(df_Viviendas_Agrupado) # Se transforma el dataframe df_Viviendas_Agrupado en un objeto de tipo H2O. Esto es necesario porque H2O opera de manera eficiente con grandes volúmenes de datos en paralelo y optimiza la manipulación y el análisis de datos para el machine learning.
+
+splits <- h2o.splitFrame(
+                         data = data, 
+                         ratios = c(0.7, 0.15),  # Partición de los datos en 70%, 15% y 15%, para entrenar, validar y testear, respectivamente
+                         destination_frames = c("train", "valid", "test"),
+                         seed = 1  # setting a seed will guarantee reproducibility
+                         )  
+train  <- splits[[1]]
+valid  <- splits[[2]]
+test   <- splits[[3]]
+y <- "PRICE" # Define y como la variable objetivo (target) que se va a predecir en el modelo.
+x <- setdiff(names(data), y) # Me da las variables predictoras. Elimino la variable PRICE de las variables predictoras.
+print(x)
+
+# Ejecuto un proceso de AutoML, usando la función h2o.automl()
+
+tic()
+
+aml <- h2o.automl(
+                    x                  = x,
+                    y                  = y, 
+                    training_frame     = train,
+                    validation_frame   = valid,
+                    nfold              = 3, # Especifica el número de folds (pliegues) para la validación cruzada.
+                    max_runtime_secs   = 100, # Especifica el tiempo máximo de ejecución en segundos para AutoML. 
+                    stopping_metric    = "RMSE", #  Especifica la métrica utilizada para detener el entrenamiento del modelo cuando se alcanza cierto criterio. En este caso, se utiliza "RMSE" (error cuadrático medio)
+                    exclude_algos      = c("GLM", "StackedEnsemble", "XGBoost"), #  Como se indicaba anteriormente, se excluyen estos algoritmos
+                    stopping_tolerance = 0.5,   # Especifica la tolerancia para la métrica de parada, en este caso, la métrica usada es RMSE
+                    stopping_rounds    = 2,  #Especifica el número de rondas de entrenamiento adicionales después de que se detenga el modelo. Si no se observa una mejora en la métrica de parada después de estas rondas adicionales, el entrenamiento se detendrá.
+                    seed               = 12345, # Semilla utilizada para la aleatorización y garantizar la reproducibilidad de los resultados. Utilizar la misma semilla garantiza que los resultados sean consistentes entre ejecuciones.
+                    sort_metric        = c("RMSE") # Especifica la métrica utilizada para ordenar los modelos en función de su rendimiento. 
+                 )
+
+toc()
+
+# Una vez ejecutado el proceso de AutoML, muestros el top 10 de los mejores modelos generados en función de su rmse (en orden creciente):
+
+lb <- aml@leaderboard
+lb_df <- as.data.frame(lb)
+
+lb_df %>% head(10) %>% kbl(caption = "Top-10 Mejores Modelo Ejecutados - Ordenados por RMSE") %>% kable_minimal()
+
+# Se observa los modelos DeepLearning son los mejores.
+
+# Muestro ahora los 10 modelos peores:
+
+lb_df %>% tail(10) %>% kbl(caption = "Top-10 Peores Modelo Ejecutados - Ordenados por RMSE") %>% kable_minimal()
+
+# Se han generado hasta 28 modelos, los peores (con rmse más alto) son modelos GBM (Gradient Boosting Machine)
+
+# Por tanto, en base a lo anterior, saco el modelo ganador:
+
+win_mod <- word(lb_df$model_id[1], 1, sep = fixed("_"))
+print (win_mod)
+
+# Resultados del mejor modelo:
+
+best_mod <- aml@leader
+best_mod
+
+# En el cross-validation se obtiene una media de R^2 de 0.827856, lo cual indica que las predicciones ejecutadas suelen ajustarse a los datos entredos / observados en un 82.78% de media.
+
+# Ejecuto el mejor modelo con datos sacados para el test y así conocemos su error:
+
+aml_perf <- h2o.performance(model = aml@leader, newdata = test)
+err_val_pre  <- h2o.rmse(aml_perf)
+print(err_val_pre)
+
+# Obtenemos un error de 71,133.62. Vamos a ver si podemos conseguir mejorar el resultado del error, usando una aproximación basada en caret con diferentes algoritmos.
+
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 2.2. MODELOS - Entrenamientos modelos (Caret) </b></h1>
+
+```{r 2.2. MODELOS - Entrenamientos modelos (Caret)}
+
+# Entrenamos cada modelo por separado para generar los .RDS. Lo que se pretende es crear una variable control que usaremos luego para incoorporarlo a cada uno de los modelos.
+
+if (entrena  == 1) {
+    # TrainControl general con método de validación cruzada con 10 particiones por 1 repeticiones.
+    control <- trainControl(
+                          method        = "repeatedcv", 
+                          number        = 10,
+                          repeats       = 3, 
+                          returnResamp  = "final",
+                          allowParallel = TRUE
+                         ) #El número de datos resamples utilizando cross validation (repeatedcv) para todos los algoritmos y métricas es exactamente el número de particiones (numbers = 10) multiplicado por las repeticiones (repeats = 3), en nuestro caso 30.
+    
+#Como metrica utilizaremos RMSE en todos los casos.
+  metrica <- "RMSE"
+  
+  }
+
+if (entrena  == 1) {
+    # Creamos muestras de entrenamiento y de test (80% - 20%). Estas se usaran a continuación como parte del modelo de entrenamiento:
+  set.seed(100)
+  train_sample <- createDataPartition(y = df_Viviendas_Agrupado$PRICE,p = .8, list = FALSE)
+  train_reg    <- df_Viviendas_Agrupado[train_sample,] 
+  test_reg     <- df_Viviendas_Agrupado[-train_sample,]
+    #-- Save train/test reg.
+  save(train_reg, test_reg, file = "./traintest_reg.RData")
+  }
+
+```
+
+<h1 style="font-size:25px;"><b> 2.3. MODELOS - Modelo GLM </b></h1>
+
+```{r 2.3. MODELOS - Modelo GLM}
+
+# Empezamos con el modelo de regresión lineal generalizada (GLM).
+
+# Este modelo es una extensión de los modelos de regresión lineal que permite a las variables de respuesta seguir distribuciones no normales. Según se pudo comprobar anteriormente, muchas variables seguían distribuciones no normales, por lo que, este modelo puede que tenga buen encaje.
+
+if (entrena  == 1) {
+set.seed(7) # Mantenemos la semilla para poder comparar correctamente los modelos.
+
+tic()
+modelo_glm_reg <- train(
+                        PRICE ~., 
+                        data      = train_reg, 
+                        method    = "glmnet",
+                        family    = "poisson", 
+                        metric    = metrica, 
+                        preProc   = c("center", "scale"),  # Este tipo de modelos requiren de un preprocesado previo que consiste en el centrado y escalado de los datos de entrada.
+                        trControl = control
+                       )
+
+saveRDS(modelo_glm_reg, "./output/modelo_glm_reg.RDS")
+
+toc()
+
+# 35.98 sec elapsed
+
+# Obtengo la regresión que ha minimizado el RMSE:
+
+modelo_glm_reg$results %>%
+  filter(RMSE == min(RMSE))
+
+# Obtenemos un error de 75,414.43.
+
+}
+
+
+```
+
+<h1 style="font-size:25px;"><b> 2.4. MODELOS - Modelo Lasso </b></h1>
+
+```{r 2.4. MODELOS - Modelo Lasso}
+
+# Continuamos con el modelo Lasso.
+
+# El método Lasso es una variante de la regresión lineal que incluye una penalización para reducir la complejidad del modelo y evitar el sobreajuste.
+
+if (entrena  == 1) {
+set.seed(7)
+tic()
+
+# Control de la Técnica de Remuestreo: 50 muestras bootstrap --> Proceso iterativo de hasta 50 aárboles de decisión, en el cual se van eliminando en cada uno de ellos los resultados en los que el modelo ha fallado.
+
+lasso.ctrl = trainControl( method = "boot" , number = 50)
+
+# Se configura una serie de hiperparámetros para el parámetro lambda, con el objeto de compararlos a posteriori:
+
+lassoGrid = expand.grid( .alpha = 1 , .lambda = seq( 1000 , 4000 , length = 40 ))
+
+modelo_lasso_reg <- train(
+                           PRICE ~., 
+                           data      = train_reg, 
+                           method    = "glmnet", 
+                           tuneGrid  = lassoGrid, 
+                           metric    = metrica, 
+                           preProc   = c("center", "scale"), 
+                           trControl = lasso.ctrl
+                          )
+
+saveRDS(modelo_lasso_reg, "./output/modelo_lasso_reg.RDS")
+toc()
+
+# 11.86 sec elapsed
+
+# Observo que existe un punto de inflexión en este tramo de la RMSE, que se puede apreciar en esta curva:
+
+plot(modelo_lasso_reg$results[,"lambda"],modelo_lasso_reg$results[,"RMSE"])
+
+# Se cambia los parámetros en el tramo de la curva donde la RMSE es más baja:
+
+tic()
+
+lassoGrid = expand.grid( .alpha = 1 , .lambda = seq( 2000 , 2500 , length = 40 ))
+
+modelo_lasso_reg <- train(
+                           PRICE ~., 
+                           data      = train_reg, 
+                           method    = "glmnet", 
+                           tuneGrid  = lassoGrid, 
+                           metric    = metrica, 
+                           preProc   = c("center", "scale"), 
+                           trControl = lasso.ctrl
+                          )
+saveRDS(modelo_lasso_reg, "./output/modelo_lasso_reg.RDS")
+toc()
+
+# 12.46 sec elapsed
+
+# Obtengo el árbol que ha minimizado el RMSE:
+
+modelo_lasso_reg$results %>%
+  filter(RMSE == min(RMSE))
+
+# Obtenemos un error de 82,133.07 con un lambda = 2128.205
+
+plot(modelo_lasso_reg$results[,"lambda"],modelo_lasso_reg$results[,"RMSE"])
+
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 2.5. MODELOS - Modelo K-Vecinos </b></h1>
+
+```{r 2.5. MODELOS - Modelo K-Vecinos}
+
+# Continuamos con el modelo K-Vecinos.
+
+# El método de los K-vecinos (KNN - K-Nearest Neighbors) tiene como principio básico que un punto de datos se clasifica o se le asigna un valor basado en la mayoría de los k puntos de datos más cercanos en el espacio de características. Es por ello, que uno de los parámetros fundamentales de este algortimo es el número de vecinos cercanos con el que queremos llevar a cabo los cálculos:
+
+tic()
+
+if (entrena == 1) {
+  set.seed(7)
+  
+  # Hiperparamentros en función del número de vecinos:
+  
+  knnGrid <- expand.grid(kmax = seq(1, 20, by = 2),
+                         distance = 2,  # Distancia Euclidiana (p = 2)
+                         kernel = 'optimal')  # Ponderación óptima (para kknn)
+
+  metrica <- "RMSE"
+  
+  # Entrenar el modelo KNN
+  modelo_knn_reg <- train(PRICE ~ .,
+                          data = train_reg,
+                          method = "kknn",  # Utilizando kknn para KNN con ponderación
+                          metric = metrica,
+                          preProc = c("center", "scale"),  # Preprocesamiento de datos
+                          trControl = control,
+                          tuneGrid = knnGrid)
+  
+  # Guardar el modelo entrenado
+  saveRDS(modelo_knn_reg, file = "./output/modelo_knn_reg.RDS")
+  
+  toc()
+  
+# 415.98 sec elapsed
+  
+# Obtengo la regresión que ha minimizado el RMSE:
+
+modelo_knn_reg$results %>%
+  
+  filter(RMSE == min(RMSE))
+
+# Obtenemos un error de 135,505.8 con un kmax = 9
+
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 2.6. MODELOS - Modelo CART </b></h1>
+
+```{r 2.6. MODELOS - Modelo CART}
+
+# Paso ahora a ejecutar el modelo CART (Classification and Regression Trees, Árboles de Clasificación y Regresión). En definitiva, es un tipo de algoritmo de árbol de regresión para este caso, puesto que la variable explicada es numérica.
+
+if (entrena  == 1) {
+set.seed(7)
+  
+tic()
+cartGrid <- expand.grid(cp = seq(0, 0.1, by = 0.01)) #cp=parámetro de complejidad
+modelo_cart_reg <- train(
+                          PRICE ~.,
+                          data      = train_reg,
+                          method    = "rpart",
+                          metric    = metrica,
+                          preProc   = c("center", "scale"),
+                          trControl = control,
+                          tuneGrid  = cartGrid
+                         )
+
+saveRDS(modelo_cart_reg, "./output/modelo_cart_reg.RDS")
+
+toc()   
+# 11.92 sec elapsed
+
+trellis.par.set(caretTheme())
+plot(modelo_cart_reg)
+
+# Conforme el cp va disminuyendo, el RMSE va bajando. Ejecuto de nuevo el modelo modificando el rango de calculo del cp:
+
+  
+tic()
+cartGrid <- expand.grid(cp = seq(0, 0.01, by = 0.001)) #cp=parámetro de complejidad
+modelo_cart_reg <- train(
+                          PRICE ~.,
+                          data      = train_reg,
+                          method    = "rpart",
+                          metric    = metrica,
+                          preProc   = c("center", "scale"),
+                          trControl = control,
+                          tuneGrid  = cartGrid
+                         )
+
+saveRDS(modelo_cart_reg, "./output/modelo_cart_reg.RDS")
+
+toc()   
+# 12.25 sec elapsed
+
+trellis.par.set(caretTheme())
+plot(modelo_cart_reg)
+
+# Se aprecia un punto de inflexión en este rango:
+
+modelo_cart_reg$results %>%
+  
+  filter(RMSE == min(RMSE))
+
+# Obtenemos un error de 88,666.99 con un cp = 0.003
+
+}   
+
+```
+
+<h1 style="font-size:25px;"><b> 2.7. MODELOS - Modelo Random Forest </b></h1>
+
+```{r 2.7. MODELOS - Modelo Random Forest (RANGER)}
+
+# Procedemos ahora con el modelo de Random Forest, en la variante de Ranger:
+
+# RANGER es una implementación específica de Random Forest que es un tipo de ensamblaje de árboles de decisión. En los Random Forests, cada árbol individual se entrena en una muestra de datos aleatoria (bootstrap) y utiliza un subconjunto aleatorio de características en cada división, lo que reduce el sobreajuste y mejora la capacidad de generalización.
+
+# RANGER incluye métodos automáticos para la selección y ajuste de hiperparámetros, lo que simplifica el proceso de optimización del modelo. Esto puede incluir la selección del número de árboles en el ensamble, la profundidad máxima de los árboles, y otros parámetros que afectan el rendimiento y la generalización del modelo, lo que facilita a encontrar la combinación óptima de los hiperparámetros:
+
+if (entrena  == 1) {
+set.seed(7)
+  
+tic()
+
+tune_grid = expand.grid(
+                         mtry          = 3:6, #Número de variables predictoras usada en cada iteración
+                         splitrule     = c("variance", "extratrees"), 
+# Variance: Esta regla de división busca minimizar la varianza dentro de cada nodo del árbol.
+# extratrees: Esta regla utiliza una variante adicional de aleatorización en la selección de umbrales para la división.
+                         min.node.size = 55 #Número mínimo de observaciones.
+                        )
+
+modelo_rf_reg <- train( 
+                           PRICE ~., 
+                           data          = train_reg, 
+                           method        = "ranger", 
+                           metric        = "RMSE", 
+                           trControl     = control, 
+                           tuneGrid      = tune_grid,
+                           importance    = 'impurity'
+                          )
+ 
+saveRDS(modelo_rf_reg, "./output/modelo_rf_reg.RDS")
+
+}
+
+toc()
+
+# 39.54 sec elapsed
+
+# El escenario que tendría el error menor sería: mtry = 6, splitrule = variace y min.node.size = 55. RMSE = 119075.4.
+
+# Parece que este modelo se puede mejorar. Se llevan a cambio las siguientes modificaciones: 1) Amplio el número mtry hasta 15 y se reduce el min.node.size hasta 15 también.
+
+if (entrena  == 1) {
+  
+  
+set.seed(7)
+  
+tic()
+
+tune_grid = expand.grid(
+                         mtry          = 3:15, #Número de variables predictoras usada en cada iteración
+                         splitrule     = c("variance", "extratrees"), 
+# Variance: Esta regla de división busca minimizar la varianza dentro de cada nodo del árbol.
+# extratrees: Esta regla utiliza una variante adicional de aleatorización en la selección de umbrales para la división.
+                         min.node.size = seq(15, 55, by = 5) #Número mínimo de observaciones.
+                        )
+
+modelo_rf_reg <- train( 
+                           PRICE ~., 
+                           data          = train_reg, 
+                           method        = "ranger", 
+                           metric        = "RMSE", 
+                           trControl     = control, 
+                           tuneGrid      = tune_grid,
+                           importance    = 'impurity'
+                          )
+ 
+saveRDS(modelo_rf_reg, "./output/modelo_rf_reg.RDS")
+
+# 5565.02 sec elapsed
+toc()
+
+modelo_rf_reg$results %>%
+  
+  filter(RMSE == min(RMSE))
+
+}
+
+# El escenario que tendría el error menor sería: mtry = 15, splitrule = variace y min.node.size = 15. RMSE = 89,087.38	
+
+# Parece que este modelo se puede seguir mejorando, pero el tiempo de ejecución sería mucho más extenso y puedo pecar de sobreajuste si sigo aumentado el mtry y el número mínimo del nodo, por lo que me quedo con el último error:
+
+
+```
+
+<h1 style="font-size:25px;"><b> 2.8. MODELOS - Máquinas de Vector Soporte </b></h1>
+
+```{r 2.8. MODELOS - Máquinas de Vector Soporte}
+
+# Pasamos ahora a los modelos svm.
+
+# Un SVM intenta encontrar el hiperplano que mejor separa las clases de datos en un espacio de alta dimensión.
+
+# La selección cuidadosa de los valores de C, sigma, el tipo de kernel y otros parámetros puede hacer una gran diferencia en la precisión y la capacidad de generalización del modelo.
+
+if (entrena  == 1) {
+set.seed(7)
+  
+tic()
+svmGrid <- expand.grid(
+                        .C     = c(1, 1.5, 2), # Controla el equilibrio entre maximizar el margen y minimizar el error de clasificación en el conjunto de datos de entrenamiento. Valores Bajos, el cual asume un error importante. Valores Altos, trata de clasificar correctamente todas las muestras de entrenamiento, puede dar lugar a sobreajuste. Rango de 0.1 a 1000.
+                        .sigma = c(0.1, 0.01) #Controla el ancho de la "campana" de la función gaussian. Valores Bajos.La función gaussiana se ensancha, riesgo de infrajuste. Valores Altos, la función gaussiana se estrecha, pudiendo dar lugar de sobre ajuste. Rango de 0.0001 a 1. Suelen hacerse escalas en base 10.
+                       )
+modelo_svm_reg <- train(
+                         PRICE ~.,
+                         data      = train_reg,
+                         method    = "svmRadial", #Se usa el SVM con kernel radial. Permite capturar y modelar relaciones no lineales en los datos, proyectándolos en un espacio de mayor dimensión donde las clases pueden ser separadas linealmente.
+                         metric    = metrica,
+                         preProc   = c("center", "scale"),
+                         trControl = control,
+                         tuneGrid  = svmGrid
+                        )
+
+saveRDS(modelo_svm_reg, "./output/modelo_svm_reg.RDS")
+
+toc()
+
+# 350 sec elapsed
+
+modelo_svm_reg$results %>%
+  
+  filter(RMSE == min(RMSE))
+
+# Con el rango de parámetros aportado, el mejor resultado que se obtiene es el siguiente: 
+
+# RMSE= 182,322.1 para un C = 2 y un sigma = 0.01
+
+#Se entrena de nuevo el modelo dado su margen de mejora (RMSE muy grande en comparación de los modelos ejecutados hasta ahora)
+
+}
+
+if (entrena  == 1) {
+set.seed(7)
+  
+tic()
+svmGrid <- expand.grid(
+                        .C     = seq(10, 100, 10), # Controla el equilibrio entre maximizar el margen y minimizar el error de clasificación en el conjunto de datos de entrenamiento. Valores Bajos, el cual asume un error importante. Valores Altos, trata de clasificar correctamente todas las muestras de entrenamiento, puede dar lugar a sobreajuste. Rango de 0.1 a 1000.
+                        .sigma = c(0.001, 0.01,1) #Controla el ancho de la "campana" de la función gaussian. Valores Bajos.La función gaussiana se ensancha, riesgo de infrajuste. Valores Altos, la función gaussiana se estrecha, pudiendo dar lugar de sobre ajuste. Rango de 0.0001 a 1. Suelen hacerse escalas en base 10.
+                       )
+modelo_svm_reg <- train(
+                         PRICE ~. ,
+                         data      = train_reg,
+                         method    = "svmRadial", #Se usa el SVM con kernel radial. Permite capturar y modelar relaciones no lineales en los datos, proyectándolos en un espacio de mayor dimensión donde las clases pueden ser separadas linealmente.
+                         metric    = metrica,
+                         preProc   = c("center", "scale"),
+                         trControl = control,
+                         tuneGrid  = svmGrid
+                        )
+
+saveRDS(modelo_svm_reg, "./output/modelo_svm_reg.RDS")
+
+toc()
+
+# 8317.95 sec elapsed
+
+modelo_svm_reg$results %>%
+    filter(RMSE == min(RMSE))
+
+# RSME: 181,681.2
+
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 2.9. MODELOS - Perceptrón Multicapa </b></h1>
+
+```{r 2.9. MODELOS - Perceptrón Multicapa}
+
+# El perceptrón multicapa es un modelo de la familia de las redes neuronales.
+
+# El principal hiperparámetro de este modelo es el tamaños de las capas ocultas.
+
+if (entrena  == 1) {
+set.seed(7)
+
+tic()
+mlpGrid <- expand.grid(size = c(1:10)) # Tomaremos tamaños de capa oculta de 1 a 10.
+  
+modelo_svm_reg <- train(PRICE ~., 
+                        data      = train_reg, 
+                        method    = "mlp", 
+                        metric    = metrica,  
+                        preProc   = c("center", "scale"),
+                        trControl = control,  
+                        tuneGrid  = mlpGrid
+                       )
+
+saveRDS(modelo_mlp_reg, "./output/modelo_mlp_reg.RDS")
+
+toc()
+
+# 613.94 sec elapsed
+
+modelo_mlp_reg$results %>%
+    filter(RMSE == min(RMSE))
+
+# RSME: 208,629.7  
+
+}
+
+# Se observa que con estos parámetros el ajuste alcanzado es muy pobre para este modelo.
+
+```
+
+<h1 style="font-size:25px;"><b> 2.10. MODELOS - Bagging </b></h1>
+
+```{r 2.10. MODELOS - Bagging}
+
+# El algortimo coge observaciones al azar y con reemplazo (boorstrapping) y se va entrando por medio de árboles de decisión.
+
+
+if (entrena  == 1) {
+set.seed(7)
+  
+tic()
+
+modelo_bag_reg <- train(
+                        PRICE ~., 
+                        data      = train_reg, 
+                        method    = "treebag", 
+                        metric    = metrica, 
+                        preProc   = c("center", "scale"), 
+                        trControl = control, verbose = FALSE
+                       )
+
+saveRDS(modelo_bag_reg, "./output/modelo_bag_reg.RDS")
+
+toc()
+# 35.28 sec elapsed
+
+
+modelo_bag_reg
+
+# RSME: 89614.7 
+
+}
+
+```
+
+<h1 style="font-size:25px;"><b> 3.1 CARGA MODELOS </b></h1>
+
+```{r 3.1 CARGA DE MODELOS}
+
+
+# Importo todos los resultados obtenidos tras la ejecución de cada modelo:
+
+# Ficheros de clientes registrados
+
+reg_mod_glm     <- readRDS("./output/modelo_glm_reg.RDS")
+reg_mod_lasso   <- readRDS("./output/modelo_lasso_reg.RDS")
+reg_mod_knn     <- readRDS("./output/modelo_knn_reg.RDS")
+reg_mod_cart    <- readRDS("./output/modelo_cart_reg.RDS")
+reg_mod_rf      <- readRDS("./output/modelo_rf_reg.RDS")
+reg_mod_svm     <- readRDS("./output/modelo_svm_reg.RDS")
+reg_mod_mlp     <- readRDS("./output/modelo_mlp_reg.RDS")
+reg_mod_bag     <- readRDS("./output/modelo_bag_reg.RDS")
+
+# reg_mod_keras <- readRDS("./output/modelo_mlpKeras_reg.RDS")
+
+# Importo conjuntos de train y test.
+load("./traintest_reg.RData")
+
+# Ahora maqueto todos los resultados de todos los modelos para mostrarlos nítidamente
+
+```
+
+<h1 style="font-size:25px;"><b> 3.2. CARGA MODELOS - Resultados modelos GLM </b></h1>
+
+```{r 3.2 CARGA MODELOS - Resultados modelos GLM}
+
+# Se muestran todos los resultados del modelo GLM:
+
+maquetar(reg_mod_glm$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo de Regresión Lineal ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_glm)
+
+# El R^2 de conjunto de datos Test es alto. El modelo es capaz de explicar más de un 80% de la variabilidad.
+
+# El RSME mayor que el del automl de H2O, pero es una diferencia dentro de lo normal.
+
+# Con los resultados anteriores, se concluye que este modelo es robusto y que puede hacer buenas predicciones.
+
+# Obtengo un lsitado de las 10 variables más importantes para el modelo GLM:
+
+glm_imp = varImp(reg_mod_glm)
+glm_imp=as.data.frame(glm_imp$importance)
+
+top_vars <- glm_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo GLM") %>% kable_minimal()
+
+# Para el modelo GLM, las variables y los niveles que más afectan al precio son: El precio unitario, como no puede ser de otra manera dada su correlación y la ciudad de Valencia!
+
+```
+
+<h1 style="font-size:25px;"><b> 3.3. CARGA MODELOS - Resultados modelo LASSO </b></h1>
+
+```{r 3.3. CARGA MODELOS - Resultados modelos LASSO}
+
+# Se muestran todos los resultados del modelo LASSO:
+
+maquetar(reg_mod_lasso$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo de Regresión Lineal Lasso ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_lasso)
+
+# El R^2 de conjunto de datos Test es alto. El modelo es capaz de explicar más de un 78.56% de la variabilidad.
+
+# El RSME mayor que el del automl de H2O, pero es una diferencia dentro de lo normal.
+
+# Con los resultados anteriores, se concluye que este modelo también es robusto y que puede hacer buenas predicciones.
+
+# Obtengo un listado de las 10 variables más importantes para el modelo LASSO:
+
+lasso_imp = varImp(reg_mod_lasso)
+lasso_imp=as.data.frame(lasso_imp$importance)
+
+top_vars <- lasso_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo LASSO") %>% kable_minimal()
+
+# Para el modelo LASSO, las variables y los niveles que más afectan al precio son: El precio unitario, como no puede ser de otra manera dada su correlación y el número de baños. La ciudad de Valencia ocupa el 9 lugar.
+
+```
+
+<h1 style="font-size:25px;"><b> 3.4. CARGA MODELOS - Resultados modelo K - Vecinos </b></h1>
+
+```{r 3.4. CARGA MODELOS - Resultados modelo K - Vecinos}
+
+# Se muestran todos los resultados del modelo K-Vecinos:
+
+maquetar(reg_mod_knn$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo de K-vecinos ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_knn)
+
+# A pesar de que en el conjunto de datos, el modelo sí que tiene buena acogida, en el conjunto de test, no.
+
+plot(reg_mod_knn)
+
+# Se observa que en k=9 vecinos, el modelo se estabiliza en cuanto al error, por lo que, está bien cogido este k. Un k mayor da lugar a sobreajuste.
+
+knn_imp = varImp(reg_mod_knn)
+knn_imp=as.data.frame(knn_imp$importance)
+
+top_vars <- knn_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo LASSO") %>% kable_minimal()
+
+# En este modelo, la variable más imporante también es el UNITPRICE y el número de baños. En tercera posición, se le da importancia a la calidad del inmueble según el catastro.
+
+```
+
+<h1 style="font-size:25px;"><b> 3.5. CARGA MODELOS - Resultados modelo CART </b></h1>
+
+```{r 3.5. CARGA MODELOS - Resultados modelo CART}
+
+# Se muestran todos los resultados del modelo CART:
+
+maquetar(reg_mod_cart$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo CART ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_cart)
+
+# El R^2 de conjunto de datos Test es alto, aunque no tanto como el GLM. El modelo es capaz de explicar casi el 75% de la variabilidad.
+
+# El RSME mayor que el del automl de H2O. La diferencia empieza a ser notoria.
+
+# Con los resultados anteriores, se concluye que este modelo es robusto y que puede hacer buenas predicciones para un cp = 0.003
+
+plot(reg_mod_cart)
+
+# Se observa que en k=9 vecinos, el modelo se estabiliza en cuanto al error, por lo que, está bien cogido este k. Un k mayor da lugar a sobreajuste.
+
+cart_imp = varImp(reg_mod_cart)
+cart_imp=as.data.frame(cart_imp$importance)
+
+top_vars <- cart_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo CART") %>% kable_minimal()
+
+# En este modelo, la variable más imporante también es TAMBIÉN el UNITPRICE y el número de baños.
+
+```
+
+<h1 style="font-size:25px;"><b> 3.6. CARGA MODELOS - Resultados modelo RANDOM FOREST - RANGER </b></h1>
+
+```{r 3.6. CARGA MODELOS - Resultados modelo RANDOM FOREST - RANGER}
+
+# Se muestran todos los resultados del modelo Random Forest:
+
+maquetar(reg_mod_rf$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo Random Forest ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_rf)
+
+# El R^2 de conjunto de datos Test es alto. El modelo es capaz de explicar más de un 80% de la variabilidad.
+
+# El RSME mayor que el del automl de H2O. La diferecia comenzaría a ser notoria
+
+# Con los resultados anteriores, se concluye que este modelo es robusto y que puede hacer buenas predicciones.
+
+# Obtengo un lsitado de las 10 variables más importantes para el modelo GLM:
+
+plot(reg_mod_rf)
+
+# Tanto para un splirule igual a variance o a extratrees, el error alcanzado por el modelo se mantendría constante para mtry por encima de 14 variables.
+
+ranger_imp = varImp(reg_mod_rf)
+ranger_imp=as.data.frame(ranger_imp$importance)
+
+top_vars <- ranger_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo RANDOM FOREST - RANGER") %>% kable_minimal()
+
+# En este modelo, la variable más imporante también es TAMBIÉN el UNITPRICE. Vuelve a aparecer, como en el GLM el nivel Valencia como uno de los más importantes. El número de baños tambiñen son importantes.
+
+```
+
+<h1 style="font-size:25px;"><b> 3.7. CARGA MODELOS - Resultados modelo SVM </b></h1>
+
+```{r 3.7. CARGA MODELOS - Resultados modelo SVM}
+
+# Se muestran todos los resultados del modelo SVM:
+
+maquetar(reg_mod_svm$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo SVM ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_svm)
+
+# El R^2 es relativamente bajo, por debajo del 50%. Por lo que el modelo no es capaz de explicar ni el 50% de la variabildiad.
+
+# El RSME es alto por lo que este modelo no tiene una buena acogida.
+
+plot(reg_mod_svm)
+
+# Se aprecia en el gráfico como el modelo mejora con un sigma más pequeño y un coste mayor.
+
+# Con los parámetros usados, el modelo ha tardado mas de dos horas en su ejecución, por lo que considero que optimizar estos parámetros carecía de sentido.
+
+svm_imp = varImp(reg_mod_svm)
+svm_imp=as.data.frame(svm_imp$importance)
+
+top_vars <- svm_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo SVM") %>% kable_minimal()
+
+# En este modelo, la variable más imporante también es TAMBIÉN el UNITPRICE. Le sigue el número de baños con más de un 50% de overall y la calidad del inmueble según catastro.
+
+```
+
+<h1 style="font-size:25px;"><b> 3.8. CARGA MODELOS - Resultados modelo Perceptrón Multicapa </b></h1>
+
+```{r 3.8. CARGA MODELOS - Resultados modelo Perceptrón Multicapa}
+
+# Se muestran todos los resultados del modelo Perceptrón Multicapa:
+
+maquetar(reg_mod_mlp$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo Perceptrón Multicapa ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_mlp)
+
+# Este modelo carece de sentido al no ser capaz de explicar la variabilidad ni al 0.05%. RSME muy alto, como no puede ser de otra manera.
+
+plot(reg_mod_mlp)
+
+# Efectivamente, el modelo tenía "mejor acogida" con 5 nudos en la capa oculta.
+
+mlp_imp = varImp(reg_mod_mlp)
+mlp_imp=as.data.frame(mlp_imp$importance)
+
+top_vars <- mlp_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo Perceptrón Multicapa") %>% kable_minimal()
+
+# Curioso, la tabla es la misma que la del SVM...
+
+```
+
+<h1 style="font-size:25px;"><b> 3.9. CARGA MODELOS - Resultados modelo Bagging </b></h1>
+
+```{r 3.9. CARGA MODELOS - Resultados modelo Bagging}
+
+# Se muestran todos los resultados del modelo Perceptrón Multicapa:
+
+maquetar(reg_mod_bag$results %>% 
+           arrange(-Rsquared) %>% 
+           head(10)) %>% 
+  add_header_lines(values = "Resultados entrenamiento del modelo Perceptrón Multicapa ordenados según valor del R2")
+
+# Medidas del modelo:
+
+Medidas_Modelo_reg(reg_mod_bag)
+
+# El R^2 de conjunto de datos Test es alto, aunque no tanto como el GLM. El modelo es capaz de explicar casi el 75% de la variabilidad.
+
+# El RSME mayor que el del automl de H2O. La diferencia empieza a ser notoria.
+
+# Con los resultados anteriores, se concluye que este modelo es robusto y que puede hacer buenas predicciones.
+
+bag_imp = varImp(reg_mod_bag)
+bag_imp=as.data.frame(bag_imp$importance)
+
+top_vars <- bag_imp %>%
+  arrange(desc(Overall)) %>%
+  head(10)
+
+top_vars %>% kbl(caption = "Variables importantes para el modelo Perceptrón Multicapa") %>% kable_minimal()
+
+# En este modelo, la variable más imporante también es TAMBIÉN el UNITPRICE y el número de baños.
+
+```
+
+<h1 style="font-size:25px;"><b> 4. COMPARACIÓN ENTRE MODELOS </b></h1>
+
+```{r 4. COMPARACIÓN ENTRE MODELOS}
+
+# Extraer y etiquetar los resultados de cada modelo
+glm_results <- extract_model_results(reg_mod_glm, "GLM")
+lasso_results <- extract_model_results(reg_mod_lasso, "LASSO")
+cart_results <- extract_model_results(reg_mod_cart, "CART")
+knn_results <- extract_model_results(reg_mod_knn, "KNN")
+mlp_results <- extract_model_results(reg_mod_mlp, "MLP")
+svm_results <- extract_model_results(reg_mod_svm, "SVM")
+rf_results <- extract_model_results(reg_mod_rf, "RF")
+bag_results <- extract_model_results(reg_mod_bag, "BAG")
+
+# Combinar todos los resultados en una tabla
+all_results <- rbind(glm_results, lasso_results, cart_results, knn_results, mlp_results, svm_results, rf_results, bag_results)
+
+# Calcular el promedio de cada métrica para cada modelo
+
+summary_table <- all_results %>%
+  group_by(Model) %>%
+  summarise(RMSE = mean(RMSE),
+            Rsquared = mean(Rsquared),
+            MAE = mean(MAE))
+
+# Ordenar la tabla por RMSE (de menor a mayor)
+summary_table <- summary_table %>%
+  arrange(RMSE)
+
+# Visualizar la tabla ordenada usando kableExtra
+summary_table %>% 
+  kbl(caption = "Resumen de Resultados de los Modelos Ordenados por RMSE") %>% 
+  kable_minimal()
+
+# Se comprueba que los modelos de regresión lineal (GLM y LASSO) son los que mejor acogida tienen del modelo y no precisan de tiempo de ejecución muy extensos.
+
+```
+
+<h1 style="font-size:25px;"><b> 5.1 INTERPRETABILIDAD MODELOS - PERFORMANCE </b></h1>
+
+```{r 5.1 INTERPRETABILIDAD MODELOS - PERFORMANCE}
+
+# Para la interpretabildiad se toman los modelos top-3 del listado anterior, es decir: GLM, LASSO y CART.
+
+# Se cargan los modelos
+
+load("./traintest_reg.RData")
+
+# Uso la libreria DALEX para crear explicadores del modelo, que no dejan de ser listas que puede: 1) explicar el modelo, 2) evaluar su rendimiento, 3) visualizar sus resultados y predicciones, 4) hacer un diagnostico del modelo, etc...
+
+explainer_GLM_reg <- DALEX::explain(
+                                 reg_mod_glm,
+                                 label   = "GLM",
+                                 data    = test_reg,
+                                 y       = test_reg$PRICE,
+                                 verbose = FALSE
+                              )
+
+explainer_LASSO_reg <- DALEX::explain(
+                                 reg_mod_lasso,
+                                 label   = "LASSO",
+                                 data    = test_reg,
+                                 y       = test_reg$PRICE,
+                                 verbose = FALSE
+                              )
+
+explainer_CART_reg <- DALEX::explain(
+                                 reg_mod_cart,
+                                 label   = "CART",
+                                 data    = test_reg,
+                                 y       = test_reg$PRICE,
+                                 verbose = FALSE
+                              )
+
+
+# Evalúo cada uno de los modelos:
+
+mp_xgb_reg  <- model_performance(explainer_GLM_reg)
+mp_gbm_reg  <- model_performance(explainer_LASSO_reg)
+mp_rf_reg   <- model_performance(explainer_CART_reg)
+
+# Grafico esta evaluación con un boxplot:
+
+plot(mp_xgb_reg, mp_gbm_reg, mp_rf_reg, geom = 'boxplot')
+
+# En este gráfico se visualizan los errores de cada modelo por medio de un diagrama de cajas, donde se representa la mediana y el rango intercuartílico.
+
+# Como se puede observar la mediana de Lasso y GLM estan muy parejas. Sin embargo, se indica que GLM tiene mejor acogida al tener el rango intercuartílico algo más estrecho.
+
+```
+
+<h1 style="font-size:25px;"><b> 5.2 INTERPRETABILIDAD MODELOS - IMPORTANCIA VARIABLES </b></h1>
+
+```{r 5.2 INTERPRETABILIDAD MODELOS - IMPORTANCIA VARIABLES}
+
+# Para explicar el modelo saco de cada uno de los tres, sus varaibles más importantes:
+
+vi_reg_glm <- model_parts(explainer_GLM_reg, loss_function = loss_root_mean_square)
+plot(vi_reg_glm)
+
+vi_reg_lasso <- model_parts(explainer_LASSO_reg, loss_function = loss_root_mean_square)
+plot(vi_reg_lasso)
+
+vi_reg_cart <- model_parts(explainer_CART_reg, loss_function = loss_root_mean_square)
+plot(vi_reg_cart)
+
+# Los tres modelos coinciden en que el precio unitario y el número de habitaciones y baños son muy importantes.
+
+```
+
+<h1 style="font-size:25px;"><b> 5.3 INTERPRETABILIDAD MODELOS - DEPENDENCIA PARCIAL </b></h1>
+
+```{r 5.3 INTERPRETABILIDAD MODELOS - DEPENDENCIA PARCIAL}
+
+# Me quedo única y exclusivamente con las tres variables más importantes del modelo GLM, el mejor hasta ahora:
+
+UP_reg_glm <- model_profile(explainer_GLM_reg, variable = "UNITPRICE", type = "partial")
+plot(UP_reg_glm)
+
+# Muy curiosa esta gráfica. El precio, no sigue una correlación lineal como se podría esperar con respecto a UNITPRICE, sino que esta sigue una línea, que parece algo exponencial.
+
+BN_reg_glm <- model_profile(explainer_GLM_reg, variable = "BATHNUMBER", type = "partial")
+plot(BN_reg_glm)
+
+# Se observa un aumento considerable del precio cuando las viviendas tienen de más de 3 baños.
+
+RN_reg_glm <- model_profile(explainer_GLM_reg, variable = "ROOMNUMBER", type = "partial")
+plot(RN_reg_glm)
+
+# Se observa una correlación directa del precio con el número de habitaciones. Conforme aumenta el número de habitaciones, el precio aumenta tambien.
+
+```
+
+<h1 style="font-size:25px;"><b> 5.4. INTERPRETABILIDAD MODELOS - EXPLICATIVIDAD </b></h1>
+
+```{r 5.4. INTERPRETABILIDAD MODELOS - EXPLICATIVIDAD}
+
+# Todo lo anterior se refería a una explicatividad global. Ahora queremos analizar la explicatividad local, es decir, cogido un piso al azar, observar el impacto de sus variables sobre la predicción.
+
+explainer_GLM_reg <- DALEX::explain(
+                                 reg_mod_glm,
+                                 label   = "GLM",
+                                 data    = test_reg,
+                                 y       = test_reg$PRICE,
+                                 verbose = FALSE
+                              )
+
+
+Home_samp <- test_reg %>%
+  select(-PRICE) %>%
+  slice_sample(n = 1) %>%
+  as.data.table()
+
+bd_GLM <- break_down(explainer_GLM_reg,
+                    Home_samp,
+                    keep_distributions = TRUE)
+
+shap_GLM <- shap(explainer_GLM_reg, Home_samp)
+
+# Mostramos la vivienda cogida al azar:
+
+Home_samp %>% kbl(caption = "Piso seleccionado") %>% kable_minimal()
+
+# Representamos el impacto de cada variable sobre la predicción:
+
+plot(bd_GLM)
+
+# Como los resultados están determinados por el azar en cuanto a la elección de la observación, la interpretación de los resultado se llevará a cabo por medio de la función "describe"
+
+describe(bd_GLM)
+
+#Saco la gráfica de las variables importantes para esta observación
+
+plot(shap_GLM)
+
+# Por el mismo motivo que el descrito arriba:
+
+describe(shap_GLM)
+
+```
+
