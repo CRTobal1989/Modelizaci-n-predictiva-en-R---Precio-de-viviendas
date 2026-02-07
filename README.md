@@ -1,0 +1,7 @@
+Este repositorio documenta el desarrollo de un ejercicio de modelización predictiva orientado a la estimación del precio de viviendas en el mercado inmobiliario español utilizando datos del año 2018. El objetivo principal es implementar y evaluar modelos de Data Science aplicados a un caso real de predicción, incorporando criterios de negocio en la interpretación y utilización de resultados.
+
+Los datos se obtienen mediante la librería idealista18 en entorno R, empleando los conjuntos Barcelona_Sale, Madrid_Sale y Valencia_Sale. Se analiza la conveniencia de tratarlos de forma conjunta o independiente, justificando las decisiones de integración, limpieza y transformación de datos aplicadas en las distintas fases del proceso analítico.
+
+El trabajo incluye el diseño del pipeline completo de modelización: exploración inicial, preprocesado, selección de variables, entrenamiento de múltiples algoritmos predictivos y ajuste de hiperparámetros. Se comparan los resultados mediante métricas adecuadas y se selecciona el modelo más eficiente atendiendo tanto a su rendimiento predictivo como a su interpretabilidad.
+
+Se presta especial atención a la explicabilidad del modelo final desde una perspectiva orientada a negocio, traduciendo resultados técnicos en conclusiones operativas útiles para la toma de decisiones. Finalmente, se aborda la productivización del modelo mediante la construcción de un mecanismo que permite consultar el sistema y obtener predicciones de precios de forma reproducible, simulando su integración en un entorno organizacional.
